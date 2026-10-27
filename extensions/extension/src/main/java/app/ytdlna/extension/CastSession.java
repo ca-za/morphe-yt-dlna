@@ -184,7 +184,9 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
                 main.post(() -> stopActive(false));
             }
         });
-        main.post(this::attachController);
+        // Attach right away (on the main thread already), so the reload and its position are
+        // known before the first title is loaded on the renderer.
+        attachController();
         load(first);
     }
 
@@ -379,6 +381,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
                         if (stopped || current == null || current.getState() != PlaybackState.STATE_PAUSED
                                 || current.getActiveQueueItemId() != queueItem
                                 || video == null || !video.equals(StreamCapture.currentVideoId())) return;
+                        Log.d("Local pause, mirrored to the renderer");
                         renderer.execute(() -> call("Pause", this::rendererPause));
                     }, PAUSE_DEBOUNCE_MS);
                 }
@@ -540,6 +543,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
     /** While the phone reloads a title, other titles it passes through are ignored. */
     private volatile long reloadUntil;
     private volatile String reloadVideoId;
+    /** Position of the reloaded title when the reload started. */
+    private volatile long reloadPosition;
 
     private boolean reloading(String videoId) {
         return SystemClock.elapsedRealtime() < reloadUntil && videoId != null && !videoId.equals(reloadVideoId);
@@ -572,7 +577,9 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         Log.d("Reloading the local title " + videoId + " at " + position + " ms");
 
         reloadVideoId = videoId;
-        reloadUntil = SystemClock.elapsedRealtime() + 6000;
+        reloadPosition = position;
+        // Covers the switch and every seek-back attempt below, plus their state updates.
+        reloadUntil = SystemClock.elapsedRealtime() + 8000;
         ignorePositionUntil = reloadUntil;
         MediaController.TransportControls controls = c.getTransportControls();
         controls.skipToQueueItem(neighbour);
@@ -601,6 +608,25 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
     }
 
     // endregion
+
+    /**
+     * After loading a title, a pause that is still there on the phone is applied to the renderer.
+     * While the phone reloads its title it reports "paused" for a moment, so wait for that first.
+     */
+    private void mirrorPauseAfterLoad(String videoId) {
+        if (stopped || !videoId.equals(loadedVideoId)) return;
+        long wait = reloadUntil - SystemClock.elapsedRealtime();
+        if (wait > 0) {
+            main.postDelayed(() -> mirrorPauseAfterLoad(videoId), wait + 500);
+            return;
+        }
+        MediaController c = controller;
+        PlaybackState state = c == null ? null : c.getPlaybackState();
+        if (state != null && state.getState() == PlaybackState.STATE_PAUSED) {
+            Log.d("Phone paused after loading " + videoId + ", pausing the renderer");
+            renderer.execute(() -> call("Pause", this::rendererPause));
+        }
+    }
 
     // region Song/video mode
 
@@ -683,19 +709,14 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
                 CastUi.onTitle(track.artist.isEmpty() ? track.title : track.title + " \u00B7 " + track.artist,
                         track.artUrl);
 
-                // Continue where the phone is.
-                long position = localPosition();
+                // Continue where the phone is. While it reloads this title, its position is
+                // not reliable; use the one from before the reload.
+                long position = SystemClock.elapsedRealtime() < reloadUntil && info.videoId.equals(reloadVideoId)
+                        ? reloadPosition : localPosition();
                 if (position > SEEK_THRESHOLD_MS) rendererSeek(position);
                 // The phone reports "paused" for a moment while switching videos, so only
                 // mirror a pause that is still there once the switch has settled.
-                main.postDelayed(() -> {
-                    MediaController now = controller;
-                    PlaybackState state = now == null ? null : now.getPlaybackState();
-                    if (!stopped && state != null && state.getState() == PlaybackState.STATE_PAUSED
-                            && info.videoId.equals(loadedVideoId)) {
-                        renderer.execute(() -> call("Pause", this::rendererPause));
-                    }
-                }, LOAD_SETTLE_MS);
+                main.postDelayed(() -> mirrorPauseAfterLoad(info.videoId), LOAD_SETTLE_MS);
             } catch (Exception e) {
                 Log.e("Loading " + info.videoId + " failed", e);
                 toast(DlnaCast.t("Streamen fehlgeschlagen: ", "Cast failed: ") + e.getMessage());
@@ -942,8 +963,15 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
     }
 
     private void rendererSeek(long positionMs) throws Exception {
-        if (openHome) OpenHome.seekSeconds(device, positionMs);
-        else DlnaController.seek(device, positionMs);
+        if (openHome) {
+            OpenHome.seekSeconds(device, positionMs);
+            // Some renderers stay paused after an OpenHome seek: resume if the phone plays.
+            MediaController c = controller;
+            PlaybackState state = c == null ? null : c.getPlaybackState();
+            if (state == null || state.getState() == PlaybackState.STATE_PLAYING) OpenHome.play(device);
+        } else {
+            DlnaController.seek(device, positionMs);
+        }
     }
 
     private long rendererPosition() throws Exception {
