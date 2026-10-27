@@ -58,6 +58,12 @@ final class OpenHome {
         return m.find() ? Long.parseLong(m.group(1)) * 1000 : -1;
     }
 
+    /** Playlist transport state: Playing, Paused, Stopped, Buffering, or "" if unknown. */
+    static String transportState(DlnaDevice device) throws IOException {
+        Matcher m = Pattern.compile("<Value>(.*?)</Value>").matcher(playlist(device, "TransportState", ""));
+        return m.find() ? m.group(1) : "";
+    }
+
     /** Maps an OpenHome transport state to the AVTransport names. */
     static String toAvTransportState(String state) {
         switch (state) {
