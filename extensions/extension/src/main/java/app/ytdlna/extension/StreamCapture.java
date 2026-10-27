@@ -60,6 +60,27 @@ public final class StreamCapture {
         });
     }
 
+    /** Video id of the video or track the player loaded last. */
+    private static volatile String currentVideoId;
+
+    /** Injection point: the player loads a new video. */
+    public static void onVideoLoaded(String videoId) {
+        if (videoId == null || videoId.isEmpty() || videoId.equals(currentVideoId)) return;
+        currentVideoId = videoId;
+        Log.d("Now playing " + videoId);
+    }
+
+    /** Streams of the video that is playing, or the most recently captured ones. */
+    static StreamInfo current() {
+        String videoId = currentVideoId;
+        if (videoId != null) {
+            StreamInfo info = get(videoId);
+            if (info != null) return info;
+        }
+        List<StreamInfo> recent = recent();
+        return recent.isEmpty() ? null : recent.get(0);
+    }
+
     static StreamInfo get(String videoId) {
         synchronized (streams) {
             return streams.get(videoId);

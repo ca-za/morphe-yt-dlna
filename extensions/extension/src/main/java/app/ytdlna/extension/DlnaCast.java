@@ -68,7 +68,8 @@ public final class DlnaCast {
      */
     public static boolean onCastButtonClick(View button) {
         if (passThroughClick) {
-            passThroughClick = false;
+            // Re-dispatched click for Google Cast. May pass several hooked
+            // performClick methods (subclass and superclass) in one call.
             return false;
         }
         try {
@@ -151,7 +152,11 @@ public final class DlnaCast {
                     break;
                 case GOOGLE_CAST:
                     passThroughClick = true;
-                    castButton.performClick();
+                    try {
+                        castButton.performClick();
+                    } finally {
+                        passThroughClick = false;
+                    }
                     break;
                 case ADD_DEVICE:
                     showAddDevice(activity, onDone);
@@ -302,8 +307,7 @@ public final class DlnaCast {
 
     /** The video that was loaded most recently. */
     private static StreamInfo currentStream() {
-        List<StreamInfo> recent = StreamCapture.recent();
-        return recent.isEmpty() ? null : recent.get(0);
+        return StreamCapture.current();
     }
 
     private static boolean isMusicApp(Context context) {

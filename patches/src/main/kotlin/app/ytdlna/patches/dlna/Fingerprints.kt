@@ -33,3 +33,14 @@ internal object CastButtonPerformClickFingerprint : Fingerprint(
     parameters = listOf(),
     strings = listOf("com.android.systemui.action.LAUNCH_MEDIA_OUTPUT_DIALOG")
 )
+
+/**
+ * Called with (player response model, video id) when the player loads a new video or track.
+ * Same method in YouTube and YouTube Music. Used to know which captured streams belong to the
+ * video that is actually playing, since ads and preloaded videos are captured as well.
+ */
+internal object VideoLoadFingerprint : Fingerprint(
+    returnType = "L",
+    parameters = listOf("L", "Ljava/lang/String;"),
+    strings = listOf("Null initialPlayabilityStatus")
+)

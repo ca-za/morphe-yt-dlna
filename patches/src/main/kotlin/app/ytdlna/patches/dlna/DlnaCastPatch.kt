@@ -6,7 +6,11 @@ import app.morphe.patcher.patch.PatchException
 import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.patch.resourcePatch
 import app.morphe.patcher.util.proxy.mutableTypes.MutableMethod.Companion.toMutable
+import app.morphe.patcher.extensions.InstructionExtensions.instructions
 import com.android.tools.smali.dexlib2.AccessFlags
+import com.android.tools.smali.dexlib2.Opcode
+import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 import com.android.tools.smali.dexlib2.builder.MutableMethodImplementation
 import com.android.tools.smali.dexlib2.immutable.ImmutableMethod
 import com.android.tools.smali.dexlib2.immutable.ImmutableMethodParameter
@@ -16,6 +20,8 @@ import org.w3c.dom.Element
 
 private const val CAPTURE_CLASS = "Lapp/ytdlna/extension/StreamCapture;"
 private const val CAST_CLASS = "Lapp/ytdlna/extension/DlnaCast;"
+private const val MDX_MEDIA_ROUTE_BUTTON_CLASS =
+    "Lcom/google/android/libraries/youtube/mdx/mediaroute/MdxMediaRouteButton;"
 private const val SHARE_ACTIVITY = "app.ytdlna.extension.DlnaShareActivity"
 
 private val PERMISSIONS = listOf(
@@ -113,6 +119,33 @@ val dlnaCastPatch = bytecodePatch(
             "invoke-static/range { p1 .. p2 }, $CAPTURE_CLASS->onStreamingData(Ljava/lang/Object;Ljava/lang/Object;)V"
         )
 
+        // Remember which video is playing. The first String getter the method calls on the
+        // player response model (its first parameter) returns the video id.
+        VideoLoadFingerprint.method.apply {
+            val getVideoId = instructions.firstNotNullOf { instruction ->
+                val reference = (instruction as? ReferenceInstruction)?.reference as? MethodReference
+                reference?.takeIf {
+                    (instruction.opcode == Opcode.INVOKE_INTERFACE ||
+                        instruction.opcode == Opcode.INVOKE_INTERFACE_RANGE) &&
+                        it.returnType == "Ljava/lang/String;" &&
+                        it.parameterTypes.isEmpty()
+                }
+            }
+            val model = if (AccessFlags.STATIC.isSet(accessFlags)) "p0" else "p1"
+            // v0 is free at the start of the method.
+            addInstructionsWithLabels(
+                0,
+                """
+                    if-eqz $model, :no_model
+                    invoke-interface/range { $model .. $model }, $getVideoId
+                    move-result-object v0
+                    invoke-static { v0 }, $CAPTURE_CLASS->onVideoLoaded(Ljava/lang/String;)V
+                    :no_model
+                    nop
+                """
+            )
+        }
+
         // The app hides and disables the cast button when no Google Cast device is on the
         // network. Keep it usable so DLNA devices can be reached without a Chromecast.
         val castButtonClass = CastButtonPerformClickFingerprint.classDef
@@ -153,17 +186,22 @@ val dlnaCastPatch = bytecodePatch(
         }
 
         // Show the DLNA device picker when the cast button is tapped.
-        CastButtonPerformClickFingerprint.method.addInstructionsWithLabels(
-            0,
-            """
-                invoke-static/range { p0 .. p0 }, $CAST_CLASS->onCastButtonClick(Landroid/view/View;)Z
-                move-result v0
-                if-eqz v0, :original
-                const/4 v0, 0x1
-                return v0
-                :original
-                nop
-            """
-        )
+        val castClickHook = """
+            invoke-static/range { p0 .. p0 }, $CAST_CLASS->onCastButtonClick(Landroid/view/View;)Z
+            move-result v0
+            if-eqz v0, :original
+            const/4 v0, 0x1
+            return v0
+            :original
+            nop
+        """
+        CastButtonPerformClickFingerprint.method.addInstructionsWithLabels(0, castClickHook)
+
+        // YouTube Music's subclass has its own performClick that does not always call super.
+        classDefByOrNull(MDX_MEDIA_ROUTE_BUTTON_CLASS)?.let { classDef ->
+            mutableClassDefBy(classDef).methods.firstOrNull { method ->
+                method.name == "performClick" && method.parameterTypes.isEmpty() && method.returnType == "Z"
+            }?.addInstructionsWithLabels(0, castClickHook)
+        }
     }
 }
