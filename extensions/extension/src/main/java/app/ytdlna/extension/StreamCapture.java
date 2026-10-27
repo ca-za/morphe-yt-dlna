@@ -59,8 +59,16 @@ public final class StreamCapture {
      * @param streamingData StreamingData proto (com.google.protobuf.MessageLite).
      * @param videoDetails  VideoDetails proto (com.google.protobuf.MessageLite).
      */
+    private static boolean checkedVolume;
+
     public static void onStreamingData(Object streamingData, Object videoDetails) {
         if (streamingData == null) return;
+        if (!checkedVolume) {
+            // First playback after an app start: undo a mute left by an interrupted cast.
+            checkedVolume = true;
+            android.content.Context context = currentContext();
+            if (context != null) CastSession.restoreVolumeAfterCrash(context);
+        }
         // Protos are immutable, so they can be serialized off the player thread.
         executor.execute(() -> {
             try {
@@ -116,6 +124,17 @@ public final class StreamCapture {
         }
         List<StreamInfo> recent = recent();
         return recent.isEmpty() ? null : recent.get(0);
+    }
+
+    /** The application context, from the activity thread (no hook needed). */
+    @SuppressWarnings({"PrivateApi", "DiscouragedPrivateApi"})
+    private static android.content.Context currentContext() {
+        try {
+            return (android.content.Context) Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication").invoke(null);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     static StreamInfo get(String videoId) {

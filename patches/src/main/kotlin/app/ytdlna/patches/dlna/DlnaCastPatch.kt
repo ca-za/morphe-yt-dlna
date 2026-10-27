@@ -7,6 +7,7 @@ import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.patch.resourcePatch
 import app.morphe.patcher.util.proxy.mutableTypes.MutableMethod.Companion.toMutable
 import app.morphe.patcher.extensions.InstructionExtensions.instructions
+import app.morphe.patcher.extensions.InstructionExtensions.replaceInstruction
 import com.android.tools.smali.dexlib2.AccessFlags
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
@@ -22,6 +23,23 @@ import org.w3c.dom.Element
 private const val CAPTURE_CLASS = "Lapp/ytdlna/extension/StreamCapture;"
 private const val CAST_CLASS = "Lapp/ytdlna/extension/DlnaCast;"
 private const val MUSIC_MODE_CLASS = "Lapp/ytdlna/extension/MusicMode;"
+private const val AUDIO_CLASS = "Lapp/ytdlna/extension/CastAudio;"
+private const val AUDIO_TRACK = "Landroid/media/AudioTrack;"
+
+/** AudioTrack methods routed through CastAudio: name + descriptor -> static replacement. */
+private val AUDIO_TRACK_CALLS = mapOf(
+    "play()V" to "play($AUDIO_TRACK)V",
+    "setVolume(F)I" to "setVolume(${AUDIO_TRACK}F)I",
+    "setStereoVolume(FF)I" to "setStereoVolume(${AUDIO_TRACK}FF)I",
+)
+
+private fun audioTrackCall(instruction: com.android.tools.smali.dexlib2.iface.instruction.Instruction): String? {
+    if (instruction.opcode != Opcode.INVOKE_VIRTUAL && instruction.opcode != Opcode.INVOKE_VIRTUAL_RANGE) return null
+    val reference = (instruction as ReferenceInstruction).reference as? MethodReference ?: return null
+    if (reference.definingClass != AUDIO_TRACK) return null
+    val signature = reference.name + "(" + reference.parameterTypes.joinToString("") + ")" + reference.returnType
+    return AUDIO_TRACK_CALLS[signature]?.let { "${reference.name}${it.substring(it.indexOf('('))}" }
+}
 private const val MDX_MEDIA_ROUTE_BUTTON_CLASS =
     "Lcom/google/android/libraries/youtube/mdx/mediaroute/MdxMediaRouteButton;"
 private const val SHARE_ACTIVITY = "app.ytdlna.extension.DlnaShareActivity"
@@ -215,6 +233,34 @@ val dlnaCastPatch = bytecodePatch(
                     nop
                 """
             )
+        }
+
+        // Silence the app's own audio while casting: route its AudioTrack volume and play
+        // calls through CastAudio. The device volume and other apps are not affected.
+        val audioClasses = mutableListOf<String>()
+        classDefForEach { classDef ->
+            if (classDef.type.startsWith("Lapp/ytdlna/")) return@classDefForEach
+            if (classDef.methods.any { method ->
+                    method.implementation?.instructions?.any { audioTrackCall(it) != null } == true
+                }) {
+                audioClasses += classDef.type
+            }
+        }
+        audioClasses.forEach { type ->
+            mutableClassDefBy(type).methods.forEach { method ->
+                val implementation = method.implementation ?: return@forEach
+                implementation.instructions.toList().forEachIndexed { index, instruction ->
+                    val target = audioTrackCall(instruction) ?: return@forEachIndexed
+                    val registers = if (instruction is com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction) {
+                        "/range { v${instruction.startRegister} .. v${instruction.startRegister + instruction.registerCount - 1} }"
+                    } else {
+                        val five = instruction as com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
+                        " { " + listOf(five.registerC, five.registerD, five.registerE, five.registerF, five.registerG)
+                            .take(five.registerCount).joinToString(", ") { "v$it" } + " }"
+                    }
+                    method.replaceInstruction(index, "invoke-static$registers, $AUDIO_CLASS->$target")
+                }
+            }
         }
 
         // YouTube Music: follow the song/video switch, so the renderer gets audio or video.

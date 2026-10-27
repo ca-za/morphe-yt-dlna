@@ -79,12 +79,14 @@ final class CastUi implements Application.ActivityLifecycleCallbacks {
         if (instance != null) main.post(() -> {
             instance.showBannerBriefly();
             instance.updateNotification();
+            VideoCover.update(null, null);
         });
     }
 
     /** A new title plays on the renderer. */
-    static void onTitle(String title) {
+    static void onTitle(String title, String artUrl) {
         if (instance != null) main.post(() -> {
+            VideoCover.update(title, artUrl);
             instance.nowPlaying = title == null ? "" : title;
             instance.showBannerBriefly();
             instance.updateNotification();
@@ -101,6 +103,7 @@ final class CastUi implements Application.ActivityLifecycleCallbacks {
     private void attach(Activity activity) {
         current = new WeakReference<>(activity);
         wrapWindowCallback(activity);
+        VideoCover.attach(activity);
         refresh();
     }
 

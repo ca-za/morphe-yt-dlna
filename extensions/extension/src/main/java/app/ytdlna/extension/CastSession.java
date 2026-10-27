@@ -151,8 +151,17 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
 
     private void begin(StreamInfo first) {
         Log.i("Cast session started on " + device);
+        restoreVolumeAfterCrash(context);
         StreamCapture.addListener(this);
         if (musicApp) MusicMode.setListener(this);
+        // Nothing plays on the phone while casting.
+        CastAudio.setMuted(true);
+        main.postDelayed(() -> {
+            if (!stopped && !CastAudio.hasTracks()) {
+                Log.i("App audio output unknown, muting the media volume instead");
+                muteLocal();
+            }
+        }, 3000);
         renderer.execute(() -> {
             try {
                 DlnaController.loadSinkProtocols(device);
@@ -185,6 +194,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         playlistToken = null;
         main.post(() -> {
             if (controller != null) controller.unregisterCallback(callback);
+            CastAudio.setMuted(false);
             restoreLocalVolume();
         });
         if (stopRenderer) {
@@ -215,7 +225,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         }
         controller = new MediaController(context, token);
         controller.registerCallback(callback, main);
-        muteLocal();
         logSession();
         if (openHome && loadedVideoId != null) {
             List<QueueEntry> entries = readQueue(controller.getQueue());
@@ -261,10 +270,17 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         }
     }
 
+    private static final String PREF_SAVED_VOLUME = "saved_media_volume";
+
+    /**
+     * Fallback when the app's audio output is not known: mutes the media volume. The previous
+     * volume is also saved, so it comes back even if the app is killed while casting.
+     */
     private void muteLocal() {
         AudioManager audio = context.getSystemService(AudioManager.class);
         if (audio == null || savedVolume >= 0) return;
         savedVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+        prefs(context).edit().putInt(PREF_SAVED_VOLUME, savedVolume).apply();
         audio.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0);
     }
 
@@ -273,6 +289,24 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         if (audio == null || savedVolume < 0) return;
         audio.setStreamVolume(AudioManager.STREAM_MUSIC, savedVolume, 0);
         savedVolume = -1;
+        prefs(context).edit().remove(PREF_SAVED_VOLUME).apply();
+    }
+
+    /** Restores a media volume a previous cast muted and could not restore (app was killed). */
+    static void restoreVolumeAfterCrash(Context context) {
+        android.content.SharedPreferences prefs = prefs(context);
+        int saved = prefs.getInt(PREF_SAVED_VOLUME, -1);
+        if (saved < 0) return;
+        AudioManager audio = context.getSystemService(AudioManager.class);
+        if (audio != null && audio.getStreamVolume(AudioManager.STREAM_MUSIC) == 0) {
+            audio.setStreamVolume(AudioManager.STREAM_MUSIC, saved, 0);
+            Log.i("Restored the media volume of an interrupted cast");
+        }
+        prefs.edit().remove(PREF_SAVED_VOLUME).apply();
+    }
+
+    private static android.content.SharedPreferences prefs(Context context) {
+        return context.getApplicationContext().getSharedPreferences("ytdlna", Context.MODE_PRIVATE);
     }
 
     /** Current local position in ms, extrapolated while playing. */
@@ -554,7 +588,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
                     DlnaController.play(device, url, media.mimeType, track, art, media.video);
                 }
                 loadedVideoId = info.videoId;
-                CastUi.onTitle(track.artist.isEmpty() ? track.title : track.title + " \u00B7 " + track.artist);
+                CastUi.onTitle(track.artist.isEmpty() ? track.title : track.title + " \u00B7 " + track.artist,
+                        track.artUrl);
 
                 // Continue where the phone is.
                 long position = localPosition();
