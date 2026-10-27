@@ -1,12 +1,15 @@
 package app.ytdlna.patches.dlna
 
 import app.morphe.patcher.Fingerprint
+import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.reference.StringReference
 
 internal const val STREAMING_DATA_CLASS =
     $$"Lcom/google/protos/youtube/api/innertube/StreamingDataOuterClass$StreamingData;"
 
 /**
- * Constructor of the final video streaming data model (YouTube: aleb, Music: wja).
+ * Constructor of the final video streaming data model (YouTube: aleb, Music: wja; its
+ * toString() starts with "VideoStreamingData(itags=").
  * Its first two parameters are the streaming data proto and the video details proto.
  * This runs after any stream replacement done by other patches (such as Morphe's
  * "Spoof video streams"), so it always sees the streams the player really uses.
@@ -14,12 +17,17 @@ internal const val STREAMING_DATA_CLASS =
 internal object VideoStreamingDataConstructorFingerprint : Fingerprint(
     name = "<init>",
     returnType = "V",
-    custom = { method, _ ->
+    custom = { method, classDef ->
         val types = method.parameterTypes.map { it.toString() }
         types.size >= 5 &&
             types[0] == STREAMING_DATA_CLASS &&
             types[1].startsWith("L") &&
-            types[2] == "[B"
+            classDef.methods.any { other ->
+                other.name == "toString" && other.implementation?.instructions?.any { instruction ->
+                    ((instruction as? ReferenceInstruction)?.reference as? StringReference)
+                        ?.string?.startsWith("VideoStreamingData(") == true
+                } == true
+            }
     }
 )
 
@@ -40,7 +48,7 @@ internal object CastButtonPerformClickFingerprint : Fingerprint(
  * video that is actually playing, since ads and preloaded videos are captured as well.
  */
 internal object VideoLoadFingerprint : Fingerprint(
-    returnType = "L",
+    // Returns an object since Music 9.4x, void before.
     parameters = listOf("L", "Ljava/lang/String;"),
     strings = listOf("Null initialPlayabilityStatus")
 )

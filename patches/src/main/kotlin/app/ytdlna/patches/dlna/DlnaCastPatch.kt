@@ -83,7 +83,20 @@ private val STRINGS = mapOf(
 private fun escapeXml(text: String) =
     text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "\\'")
 
+/** Shown when the patch is used without the official Morphe patches. */
+private const val REQUIRES_OFFICIAL_PATCHES =
+    "\"DLNA cast\" is an add-on to the official Morphe patches and cannot be used alone. " +
+        "Patch together with the official Morphe patch bundle, including \"GmsCore support\"."
+
 private val dlnaManifestPatch = resourcePatch {
+    // Runs after all patches: by then GmsCore support has renamed the package.
+    finalize {
+        val packageName = document("AndroidManifest.xml").use { it.documentElement.getAttribute("package") }
+        if (packageName.startsWith("com.google.android.")) {
+            throw PatchException("$REQUIRES_OFFICIAL_PATCHES (Package name unchanged: $packageName)")
+        }
+    }
+
     execute {
         val isMusic = document("AndroidManifest.xml").use { doc ->
             doc.documentElement.getAttribute("package").contains("music")
@@ -187,12 +200,20 @@ private val dlnaManifestPatch = resourcePatch {
 val dlnaCastPatch = bytecodePatch(
     name = "DLNA cast",
     description = "Adds DLNA / UPnP casting to the cast button. " +
-        "Streams the current video or song to a DLNA media renderer on the local network.",
+        "Streams the current video or song to a DLNA media renderer on the local network. " +
+        "Requires the official Morphe patches (with GmsCore support).",
     default = true
 ) {
     compatibleWith(COMPATIBILITY_YOUTUBE, COMPATIBILITY_YOUTUBE_MUSIC)
 
     dependsOn(dlnaManifestPatch)
+
+    // Runs after all patches: the official extension is merged by then if its patches are used.
+    finalize {
+        if (classDefByOrNull("Lapp/morphe/extension/shared/Utils;") == null) {
+            throw PatchException("$REQUIRES_OFFICIAL_PATCHES (Morphe extension missing)")
+        }
+    }
 
     extendWith("extensions/extension.mpe")
 
@@ -268,21 +289,20 @@ val dlnaCastPatch = bytecodePatch(
         // YouTube Music: follow the song/video switch, so the renderer gets audio or video.
         MusicPlaybackModeEnumFingerprint.matchOrNull()?.let { enumMatch ->
             val modeType = enumMatch.classDef.type
-            // The mode store is the only class whose no-argument constructor starts with a mode,
-            // and its setter takes a mode.
+            fun isSetter(method: com.android.tools.smali.dexlib2.iface.Method) =
+                method.returnType == "V" && method.parameterTypes.map { it.toString() } == listOf(modeType)
+            // The mode store is the only class that starts with a mode in its constructor (which
+            // may have unused parameters, depending on the version) and has a setter for it.
             val store = classDefByOrNull { classDef ->
-                classDef.methods.any { method ->
-                    method.name == "<init>" && method.parameterTypes.isEmpty() &&
+                classDef.methods.any(::isSetter) && classDef.methods.any { method ->
+                    method.name == "<init>" &&
                         method.implementation?.instructions?.any { instruction ->
                             instruction.opcode == Opcode.SGET_OBJECT &&
                                 ((instruction as ReferenceInstruction).reference as? FieldReference)?.type == modeType
                         } == true
                 }
             } ?: throw PatchException("Song/video mode store not found")
-            val setters = mutableClassDefBy(store).methods.filter { method ->
-                method.returnType == "V" && method.parameterTypes.map { it.toString() } == listOf(modeType)
-            }
-            if (setters.isEmpty()) throw PatchException("Song/video mode setter not found")
+            val setters = mutableClassDefBy(store).methods.filter(::isSetter)
             setters.forEach { setter ->
                 setter.addInstructions(
                     0,
