@@ -86,7 +86,7 @@ final class DlnaController {
                 "<InstanceID>0</InstanceID>" + arguments);
     }
 
-    private static String soap(String controlUrl, String serviceType, String action, String arguments)
+    static String soap(String controlUrl, String serviceType, String action, String arguments)
             throws IOException {
         String body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
                 + "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "

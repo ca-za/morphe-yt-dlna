@@ -84,6 +84,19 @@ final class StreamProxy {
         return get().port();
     }
 
+    /** Serves {@code media} of a video also under {@code path} (native proxy only). */
+    static void alias(StreamInfo info, Media media, String path) {
+        if (nativePort <= 0) return;
+        if (media.mimeType.equals("application/dash+xml")) {
+            NativeProxy.nativePutText(path, media.mimeType, manifest(info));
+            return;
+        }
+        String file = media.path.substring(media.path.lastIndexOf('/') + 1);
+        int index = Integer.parseInt(file.substring(0, file.indexOf('.')));
+        StreamInfo.Format format = info.formats.get(index);
+        NativeProxy.nativePutStream(path, format.container(), format.url, format.contentLength);
+    }
+
     static boolean isNative() {
         return nativePort > 0;
     }

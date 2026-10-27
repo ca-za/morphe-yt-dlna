@@ -104,7 +104,11 @@ fn respond<W: Write>(request: &Request, out: &mut W) -> io::Result<bool> {
             return Ok(false);
         }
     };
-    let Some(entry) = registry::get(&request.path) else {
+    let entry = match registry::get(&request.path) {
+        Some(entry) => Some(entry),
+        None => wait_for_lazy_entry(&request.path),
+    };
+    let Some(entry) = entry else {
         http::write_head(out, 404, &[("Content-Length", "0".into())], request.keep_alive)?;
         return Ok(request.keep_alive);
     };
@@ -126,6 +130,29 @@ fn respond<W: Write>(request: &Request, out: &mut W) -> io::Result<bool> {
         }
         Entry::Stream(stream) => serve_stream(stream, request, head_only, out),
     }
+}
+
+/// How long a request for a not yet loaded playlist item waits for its streams.
+const LAZY_WAIT: Duration = Duration::from_secs(20);
+
+/// Playlist items point to `/v/<videoId>/auto` before the app has loaded their streams.
+/// A request for one asks the app to load the video (event "NeedVideo") and waits for it.
+fn wait_for_lazy_entry(path: &str) -> Option<std::sync::Arc<Entry>> {
+    let video_id = path.strip_prefix("/v/")?.strip_suffix("/auto")?;
+    if video_id.is_empty() || video_id.contains('/') {
+        return None;
+    }
+    crate::info!("Renderer wants {video_id}, waiting for its streams");
+    events::push_local("NeedVideo", video_id);
+    let deadline = std::time::Instant::now() + LAZY_WAIT;
+    while std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(100));
+        if let Some(entry) = registry::get(path) {
+            return Some(entry);
+        }
+    }
+    crate::info!("Streams of {video_id} did not arrive in time");
+    None
 }
 
 fn serve_stream<W: Write>(stream: &Stream, request: &Request, head_only: bool, out: &mut W) -> io::Result<bool> {

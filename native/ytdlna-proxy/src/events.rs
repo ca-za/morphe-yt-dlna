@@ -143,6 +143,11 @@ fn truncate(s: &str, max: usize) -> &str {
     }
 }
 
+/// Queues an event from the proxy itself (empty token), such as "NeedVideo".
+pub fn push_local(name: &str, value: &str) {
+    push(Event { token: String::new(), name: name.to_string(), value: value.to_string() });
+}
+
 fn push(event: Event) {
     let (lock, condvar) = queue();
     let mut queue = lock.lock().unwrap_or_else(|e| e.into_inner());
