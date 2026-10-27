@@ -24,7 +24,9 @@ struct Subscription {
 }
 
 const MAX_QUEUED: usize = 1000;
-const REQUESTED_TIMEOUT_SECONDS: u64 = 1800;
+/// Short, so that a subscription of a killed app (never unsubscribed) is dropped by the
+/// renderer soon: renderers that notify subscribers one by one are slowed down by dead ones.
+const REQUESTED_TIMEOUT_SECONDS: u64 = 300;
 
 fn subscriptions() -> &'static Mutex<HashMap<String, Subscription>> {
     static SUBS: OnceLock<Mutex<HashMap<String, Subscription>>> = OnceLock::new();
@@ -56,23 +58,35 @@ fn agent() -> &'static ureq::Agent {
 pub fn subscribe(event_url: &str, callback_base: &str) -> io::Result<String> {
     let token = new_token();
     let callback = format!("<{}/evt/{}>", callback_base.trim_end_matches('/'), token);
+    // Known before SUBSCRIBE is sent: renderers send the initial event right away, often before
+    // the SUBSCRIBE response arrives, and drop the subscription if that event is refused.
+    subscriptions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(token.clone(), Subscription { event_url: event_url.to_string(), sid: String::new() });
     let response = agent()
         .request("SUBSCRIBE", event_url)
         .set("CALLBACK", &callback)
         .set("NT", "upnp:event")
         .set("TIMEOUT", &format!("Second-{REQUESTED_TIMEOUT_SECONDS}"))
-        .call()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("SUBSCRIBE failed: {e}")))?;
-    let sid = response
-        .header("SID")
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "SUBSCRIBE response without SID"))?
-        .to_string();
+        .call();
+    let response = match response {
+        Ok(response) if response.header("SID").is_some() => response,
+        other => {
+            subscriptions().lock().unwrap_or_else(|e| e.into_inner()).remove(&token);
+            let message = match other {
+                Ok(_) => "SUBSCRIBE response without SID".to_string(),
+                Err(e) => format!("SUBSCRIBE failed: {e}"),
+            };
+            return Err(io::Error::new(io::ErrorKind::Other, message));
+        }
+    };
+    let sid = response.header("SID").unwrap_or_default().to_string();
     let timeout = parse_timeout(response.header("TIMEOUT"));
     crate::info!("Subscribed to {event_url} ({sid}, {timeout}s)");
-    subscriptions()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(token.clone(), Subscription { event_url: event_url.to_string(), sid });
+    if let Some(sub) = subscriptions().lock().unwrap_or_else(|e| e.into_inner()).get_mut(&token) {
+        sub.sid = sid;
+    }
     spawn_renewal(token.clone(), timeout);
     Ok(token)
 }
