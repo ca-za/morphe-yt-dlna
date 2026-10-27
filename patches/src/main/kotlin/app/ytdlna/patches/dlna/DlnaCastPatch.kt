@@ -3,6 +3,7 @@ package app.ytdlna.patches.dlna
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructionsWithLabels
 import app.morphe.patcher.patch.PatchException
+import app.morphe.patcher.patch.booleanOption
 import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.patch.resourcePatch
 import app.morphe.patcher.util.proxy.mutableTypes.MutableMethod.Companion.toMutable
@@ -24,6 +25,7 @@ private const val CAPTURE_CLASS = "Lapp/ytdlna/extension/StreamCapture;"
 private const val CAST_CLASS = "Lapp/ytdlna/extension/DlnaCast;"
 private const val MUSIC_MODE_CLASS = "Lapp/ytdlna/extension/MusicMode;"
 private const val AUDIO_CLASS = "Lapp/ytdlna/extension/CastAudio;"
+private const val TEST_HOOKS_CLASS = "Lapp/ytdlna/extension/TestHooks;"
 private const val AUDIO_TRACK = "Landroid/media/AudioTrack;"
 
 /** AudioTrack methods routed through CastAudio: name + descriptor -> static replacement. */
@@ -215,9 +217,22 @@ val dlnaCastPatch = bytecodePatch(
         }
     }
 
+    val testHooks by booleanOption(
+        key = "testHooks",
+        default = false,
+        title = "Test hooks",
+        description = "Remote control for the automated regression tests. Do not use for normal builds.",
+    )
+
     extendWith("extensions/extension.mpe")
 
     execute {
+        if (testHooks == true) {
+            // TestHooks.ENABLED is a compile-time constant: its read is a single const/4.
+            mutableClassDefBy(TEST_HOOKS_CLASS).methods.single { it.name == "isEnabled" }
+                .replaceInstruction(0, "const/4 v0, 0x1")
+        }
+
         // Capture the streams the player is about to use.
         // p1 = StreamingData proto, p2 = VideoDetails proto. Neither 'this' nor
         // locals are touched, so this is safe before the super constructor call.

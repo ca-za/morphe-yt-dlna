@@ -69,6 +69,7 @@ public final class StreamCapture {
      */
     public static Object onStreamingData(Object streamingData, Object videoDetails) {
         if (streamingData == null) return null;
+        if (TestHooks.isEnabled()) TestHooks.register(appContext());
         byte[] bytes;
         try {
             bytes = toBytes(streamingData);
@@ -144,6 +145,16 @@ public final class StreamCapture {
         }
         List<StreamInfo> recent = recent();
         return recent.isEmpty() ? null : recent.get(0);
+    }
+
+    @SuppressWarnings("PrivateApi")
+    private static android.content.Context appContext() {
+        try {
+            return (android.content.Context) Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication").invoke(null);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     static StreamInfo get(String videoId) {

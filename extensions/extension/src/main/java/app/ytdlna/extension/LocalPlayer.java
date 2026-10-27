@@ -116,6 +116,13 @@ final class LocalPlayer {
         onAttached.run();
     }
 
+    /** Attaches once without retrying; for one-off use (tests). */
+    void attachNow() {
+        attachAttempts = ATTACH_ATTEMPTS;
+        attach(() -> {
+        });
+    }
+
     /** Stops listening. The controller stays usable for a final {@link #reload()}. */
     void detach() {
         detached = true;
@@ -187,6 +194,11 @@ final class LocalPlayer {
     void pause() {
         MediaController c = controller;
         if (c != null) c.getTransportControls().pause();
+    }
+
+    void next() {
+        MediaController c = controller;
+        if (c != null) c.getTransportControls().skipToNext();
     }
 
     void seekTo(long positionMs) {

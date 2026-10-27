@@ -45,6 +45,10 @@ public final class CastAudio {
         return muted ? track.setStereoVolume(0f, 0f) : track.setStereoVolume(left, right);
     }
 
+    static boolean isMuted() {
+        return muted;
+    }
+
     static void setMuted(boolean mute) {
         if (muted == mute) return;
         muted = mute;

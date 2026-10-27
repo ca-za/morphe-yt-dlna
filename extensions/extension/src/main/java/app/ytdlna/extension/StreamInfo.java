@@ -125,9 +125,15 @@ final class StreamInfo {
     }
 
     String summary() {
-        int withUrl = 0;
-        for (Format f : formats) if (f.hasUrl()) withUrl++;
+        int withUrl = 0, audio = 0, video = 0;
+        for (Format f : formats) {
+            if (!f.hasUrl()) continue;
+            withUrl++;
+            if (f.isAudioOnly()) audio++;
+            else if (f.isVideoOnly()) video++;
+        }
         return "videoId=" + videoId + " title=\"" + title + "\" length=" + lengthSeconds + "s"
-                + " formats=" + formats.size() + " withUrl=" + withUrl;
+                + " formats=" + formats.size() + " withUrl=" + withUrl
+                + " audioWithUrl=" + audio + " videoWithUrl=" + video;
     }
 }

@@ -136,3 +136,5 @@ local.properties
 *.xapk
 /tools/
 /out/
+/reports/
+__pycache__/
