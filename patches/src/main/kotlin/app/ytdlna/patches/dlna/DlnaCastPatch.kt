@@ -10,6 +10,7 @@ import app.morphe.patcher.extensions.InstructionExtensions.instructions
 import com.android.tools.smali.dexlib2.AccessFlags
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 import com.android.tools.smali.dexlib2.builder.MutableMethodImplementation
 import com.android.tools.smali.dexlib2.immutable.ImmutableMethod
@@ -20,6 +21,7 @@ import org.w3c.dom.Element
 
 private const val CAPTURE_CLASS = "Lapp/ytdlna/extension/StreamCapture;"
 private const val CAST_CLASS = "Lapp/ytdlna/extension/DlnaCast;"
+private const val MUSIC_MODE_CLASS = "Lapp/ytdlna/extension/MusicMode;"
 private const val MDX_MEDIA_ROUTE_BUTTON_CLASS =
     "Lcom/google/android/libraries/youtube/mdx/mediaroute/MdxMediaRouteButton;"
 private const val SHARE_ACTIVITY = "app.ytdlna.extension.DlnaShareActivity"
@@ -144,6 +146,32 @@ val dlnaCastPatch = bytecodePatch(
                     nop
                 """
             )
+        }
+
+        // YouTube Music: follow the song/video switch, so the renderer gets audio or video.
+        MusicPlaybackModeEnumFingerprint.matchOrNull()?.let { enumMatch ->
+            val modeType = enumMatch.classDef.type
+            // The mode store is the only class whose no-argument constructor starts with a mode,
+            // and its setter takes a mode.
+            val store = classDefByOrNull { classDef ->
+                classDef.methods.any { method ->
+                    method.name == "<init>" && method.parameterTypes.isEmpty() &&
+                        method.implementation?.instructions?.any { instruction ->
+                            instruction.opcode == Opcode.SGET_OBJECT &&
+                                ((instruction as ReferenceInstruction).reference as? FieldReference)?.type == modeType
+                        } == true
+                }
+            } ?: throw PatchException("Song/video mode store not found")
+            val setters = mutableClassDefBy(store).methods.filter { method ->
+                method.returnType == "V" && method.parameterTypes.map { it.toString() } == listOf(modeType)
+            }
+            if (setters.isEmpty()) throw PatchException("Song/video mode setter not found")
+            setters.forEach { setter ->
+                setter.addInstructions(
+                    0,
+                    "invoke-static/range { p1 .. p1 }, $MUSIC_MODE_CLASS->onModeChanged(Ljava/lang/Object;)V"
+                )
+            }
         }
 
         // The app hides and disables the cast button when no Google Cast device is on the

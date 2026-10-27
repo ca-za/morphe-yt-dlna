@@ -44,3 +44,12 @@ internal object VideoLoadFingerprint : Fingerprint(
     parameters = listOf("L", "Ljava/lang/String;"),
     strings = listOf("Null initialPlayabilityStatus")
 )
+
+/**
+ * YouTube Music's song/video mode enum (ATV_PREFERRED, OMV_PREFERRED, DONT_PLAY_VIDEO_OVERRIDE,
+ * ATV_PREFERRED_USER_TRIGGERED, OMV_PREFERRED_USER_TRIGGERED). The names stay in the static initializer.
+ */
+internal object MusicPlaybackModeEnumFingerprint : Fingerprint(
+    name = "<clinit>",
+    strings = listOf("OMV_PREFERRED_USER_TRIGGERED", "DONT_PLAY_VIDEO_OVERRIDE")
+)

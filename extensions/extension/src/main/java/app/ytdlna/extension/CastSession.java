@@ -31,7 +31,7 @@ import java.util.concurrent.Executors;
  * New videos, play, pause and seeks are forwarded. The streams the player loads are served to
  * the renderer by the stream proxy.
  */
-final class CastSession implements StreamCapture.Listener {
+final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
     /** Position differences below this are treated as normal drift, not as a seek. */
     private static final long SEEK_THRESHOLD_MS = 3000;
     /** After loading a video, position changes are ignored for this long. */
@@ -68,7 +68,7 @@ final class CastSession implements StreamCapture.Listener {
     final DlnaDevice device;
     private final Context context;
     private final String streamHost;
-    private final boolean audioOnly;
+    private final boolean musicApp;
     /** All renderer calls run in order on this thread. */
     private final ExecutorService renderer = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -116,7 +116,9 @@ final class CastSession implements StreamCapture.Listener {
         @Override
         public void onMetadataChanged(MediaMetadata metadata) {
             if (metadata != null) {
-                Log.d("Session metadata: " + metadata.getString(MediaMetadata.METADATA_KEY_TITLE));
+                Log.d("Session metadata: " + metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
+                        + " video=" + metadata.getLong("com.google.android.youtube.MEDIA_METADATA_VIDEO_WIDTH_PX")
+                        + "x" + metadata.getLong("com.google.android.youtube.MEDIA_METADATA_VIDEO_HEIGHT_PX"));
             }
         }
 
@@ -139,12 +141,18 @@ final class CastSession implements StreamCapture.Listener {
         this.context = context;
         this.device = device;
         this.streamHost = streamHost == null ? "" : streamHost;
-        this.audioOnly = context.getPackageName().contains("music");
+        this.musicApp = context.getPackageName().contains("music");
+    }
+
+    /** YouTube Music in song mode: audio only. Video mode and YouTube: video. */
+    private boolean audioOnly() {
+        return musicApp && MusicMode.isAudio();
     }
 
     private void begin(StreamInfo first) {
         Log.i("Cast session started on " + device);
         StreamCapture.addListener(this);
+        if (musicApp) MusicMode.setListener(this);
         renderer.execute(() -> {
             try {
                 DlnaController.loadSinkProtocols(device);
@@ -169,6 +177,7 @@ final class CastSession implements StreamCapture.Listener {
         stopped = true;
         Log.i("Cast session stopped");
         StreamCapture.removeListener(this);
+        if (musicApp) MusicMode.setListener(null);
         for (String token : new String[]{avTransportToken, playlistToken}) {
             if (token != null) new Thread(() -> NativeProxy.nativeUnsubscribe(token), "YtDlna-unsubscribe").start();
         }
@@ -469,6 +478,25 @@ final class CastSession implements StreamCapture.Listener {
 
     // endregion
 
+    // region Song/video mode
+
+    /** YouTube Music switched between song and video: reload the title in the other format. */
+    @Override
+    public void onMusicModeChanged(boolean audio) {
+        main.post(() -> {
+            String videoId = loadedVideoId;
+            StreamInfo info = videoId == null ? null : StreamCapture.get(videoId);
+            if (stopped || info == null) return;
+            Log.i("Switching the renderer to " + (audio ? "audio" : "video"));
+            // Reload as a new title: the playlist is rebuilt with the new format and the
+            // renderer continues at the phone's position.
+            loadedVideoId = null;
+            load(info);
+        });
+    }
+
+    // endregion
+
     // region Streams
 
     @Override
@@ -496,7 +524,7 @@ final class CastSession implements StreamCapture.Listener {
         renderer.execute(() -> {
             try {
                 if (stopped || baseUrl == null) return;
-                StreamProxy.Media media = StreamProxy.choose(info, device, audioOnly);
+                StreamProxy.Media media = StreamProxy.choose(info, device, audioOnly());
                 if (media == null) {
                     toast(DlnaCast.t("Kein passendes Format für dieses Gerät", "No suitable format for this device"));
                     return;
@@ -526,6 +554,7 @@ final class CastSession implements StreamCapture.Listener {
                     DlnaController.play(device, url, media.mimeType, track, art, media.video);
                 }
                 loadedVideoId = info.videoId;
+                CastUi.onTitle(track.artist.isEmpty() ? track.title : track.title + " \u00B7 " + track.artist);
 
                 // Continue where the phone is.
                 long position = localPosition();
@@ -628,6 +657,8 @@ final class CastSession implements StreamCapture.Listener {
                 track.artist = entry.artist;
                 track.artUrl = entry.iconUrl.startsWith("http") ? entry.iconUrl
                         : "https://i.ytimg.com/vi/" + entry.videoId + "/hqdefault.jpg";
+                StreamInfo captured = StreamCapture.get(entry.videoId);
+                if (captured != null) registerAuto(captured);
                 try {
                     existing = insertTrack(after, track, StreamProxy.registerArt(track, baseUrl));
                 } catch (Exception e) {
@@ -648,6 +679,7 @@ final class CastSession implements StreamCapture.Listener {
 
     private int insertTrack(int afterId, Track track, String art) throws Exception {
         String uri = baseUrl + "/v/" + track.videoId + "/auto";
+        boolean audioOnly = audioOnly();
         String mime = audioOnly ? "audio/mp4"
                 : device.supports("application/dash+xml") ? "application/dash+xml" : "video/mp4";
         int id = OpenHome.insert(device, afterId, uri, DlnaController.didl(uri, mime, track, art, !audioOnly));
@@ -659,7 +691,7 @@ final class CastSession implements StreamCapture.Listener {
     /** Makes {@code /v/<videoId>/auto} serve the video's media, as used by playlist entries. */
     private void registerAuto(StreamInfo info) {
         if (!StreamProxy.isNative() || baseUrl == null) return;
-        StreamProxy.Media media = StreamProxy.choose(info, device, audioOnly);
+        StreamProxy.Media media = StreamProxy.choose(info, device, audioOnly());
         if (media == null) return;
         StreamProxy.register(info);
         StreamProxy.alias(info, media, "/v/" + info.videoId + "/auto");
