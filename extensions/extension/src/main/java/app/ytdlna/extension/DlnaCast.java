@@ -37,7 +37,6 @@ public final class DlnaCast {
 
     /** Set while re-dispatching a click to the original Google Cast dialog. */
     private static boolean passThroughClick;
-    private static volatile DlnaDevice activeDevice;
 
     private enum Kind {DEVICE, SEARCHING, GOOGLE_CAST, ADD_DEVICE, STREAM_HOST, STOP}
 
@@ -115,8 +114,9 @@ public final class DlnaCast {
             adapter.addAll(devices);
             if (searching[0]) adapter.add(new Entry(Kind.SEARCHING, null, t("Suche Geräte…", "Searching for devices…")));
             else if (devices.isEmpty()) adapter.add(new Entry(Kind.SEARCHING, null, t("Keine DLNA-Geräte gefunden", "No DLNA devices found")));
-            if (activeDevice != null) {
-                adapter.add(new Entry(Kind.STOP, activeDevice, t("Wiedergabe stoppen auf ", "Stop playback on ") + activeDevice.friendlyName));
+            CastSession session = CastSession.active();
+            if (session != null) {
+                adapter.add(new Entry(Kind.STOP, session.device, t("Wiedergabe stoppen auf ", "Stop playback on ") + session.device.friendlyName));
             }
             if (castButton != null) {
                 adapter.add(new Entry(Kind.GOOGLE_CAST, null, t("Google Cast…", "Google Cast…")));
@@ -148,7 +148,7 @@ public final class DlnaCast {
                     cast(activity, entry.device, current);
                     break;
                 case STOP:
-                    stop(activity, entry.device);
+                    stop(activity);
                     break;
                 case GOOGLE_CAST:
                     passThroughClick = true;
@@ -200,52 +200,14 @@ public final class DlnaCast {
             return;
         }
         Context app = activity.getApplicationContext();
-        boolean audioOnly = isMusicApp(app);
         StreamProxy.userAgent = userAgent(app);
         toast(activity, t("Verbinde mit ", "Connecting to ") + device.friendlyName + "…");
-
-        background.execute(() -> {
-            try {
-                DlnaController.loadSinkProtocols(device);
-                StreamProxy.Media media;
-                if (audioOnly) {
-                    media = StreamProxy.audio(info);
-                } else {
-                    media = device.supports("application/dash+xml") ? StreamProxy.dash(info) : null;
-                    if (media == null) media = StreamProxy.muxed(info);
-                }
-                if (media == null) {
-                    toast(activity, t("Kein passendes Format für dieses Gerät", "No suitable format for this device"));
-                    return;
-                }
-
-                int port = StreamProxy.start(app);
-                StreamProxy.register(info);
-                String host = prefs(app).getString(PREF_STREAM_HOST, "");
-                if (host.isEmpty()) host = StreamProxy.localAddressFor(device);
-                String url = "http://" + host + ":" + port + media.path;
-                Log.i("Casting " + info.videoId + " (" + media.description + ") to " + device + ": " + url);
-
-                DlnaController.play(device, url, media.mimeType, info.title, media.video);
-                activeDevice = device;
-                toast(activity, t("Läuft auf ", "Playing on ") + device.friendlyName);
-            } catch (Exception e) {
-                Log.e("Cast failed", e);
-                toast(activity, t("Streamen fehlgeschlagen: ", "Cast failed: ") + e.getMessage());
-            }
-        });
+        CastSession.start(app, device, info, prefs(app).getString(PREF_STREAM_HOST, ""));
     }
 
-    private static void stop(Activity activity, DlnaDevice device) {
-        background.execute(() -> {
-            try {
-                DlnaController.stop(device);
-                if (activeDevice == device) activeDevice = null;
-                toast(activity, t("Gestoppt", "Stopped"));
-            } catch (Exception e) {
-                toast(activity, t("Stoppen fehlgeschlagen: ", "Stop failed: ") + e.getMessage());
-            }
-        });
+    private static void stop(Activity activity) {
+        CastSession.stopActive(true);
+        toast(activity, t("Gestoppt", "Stopped"));
     }
 
     private static void showAddDevice(Activity activity, Runnable onDone) {

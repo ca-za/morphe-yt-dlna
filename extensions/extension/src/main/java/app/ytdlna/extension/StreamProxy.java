@@ -122,6 +122,25 @@ final class StreamProxy {
 
     // region Media selection
 
+    /** The best media for a renderer: audio for YouTube Music, otherwise DASH or a muxed file. */
+    static Media choose(StreamInfo info, DlnaDevice device, boolean audioOnly) {
+        if (audioOnly) return audio(info);
+        Media media = device.supports("application/dash+xml") ? dash(info) : null;
+        return media != null ? media : muxed(info);
+    }
+
+    /**
+     * Makes the cover available to the renderer. Through the native proxy as plain http,
+     * since not every renderer can load https images, otherwise the original https URL.
+     */
+    static String registerArt(Track track, String baseUrl) {
+        if (track.artUrl.isEmpty()) return null;
+        if (nativePort <= 0) return track.artUrl;
+        String path = "/art/" + track.videoId + ".jpg";
+        NativeProxy.nativePutStream(path, "image/jpeg", track.artUrl, 0);
+        return baseUrl + path;
+    }
+
     /** DASH manifest with H.264/AAC (or VP9/Opus) tracks. Null if the video has no usable tracks. */
     static Media dash(StreamInfo info) {
         if (videoTracks(info, "video/mp4").isEmpty() && videoTracks(info, "video/webm").isEmpty()) return null;

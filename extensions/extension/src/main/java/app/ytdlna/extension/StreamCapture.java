@@ -27,6 +27,29 @@ public final class StreamCapture {
                 }
             };
 
+    /** Notified about new streams and video changes. */
+    interface Listener {
+        /** Called on a background thread. */
+        void onStreams(StreamInfo info);
+
+        /** Called on the main thread. */
+        void onVideoLoaded(String videoId);
+    }
+
+    private static final List<Listener> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    static void addListener(Listener listener) {
+        listeners.add(listener);
+    }
+
+    static void removeListener(Listener listener) {
+        listeners.remove(listener);
+    }
+
+    static String currentVideoId() {
+        return currentVideoId;
+    }
+
     private StreamCapture() {
     }
 
@@ -54,6 +77,13 @@ public final class StreamCapture {
                 for (StreamInfo.Format f : info.formats) {
                     Log.d("  " + f);
                 }
+                for (Listener listener : listeners) {
+                    try {
+                        listener.onStreams(info);
+                    } catch (Throwable t) {
+                        Log.e("Stream listener failed", t);
+                    }
+                }
             } catch (Throwable t) {
                 Log.e("Failed to capture streams", t);
             }
@@ -68,6 +98,13 @@ public final class StreamCapture {
         if (videoId == null || videoId.isEmpty() || videoId.equals(currentVideoId)) return;
         currentVideoId = videoId;
         Log.d("Now playing " + videoId);
+        for (Listener listener : listeners) {
+            try {
+                listener.onVideoLoaded(videoId);
+            } catch (Throwable t) {
+                Log.e("Video listener failed", t);
+            }
+        }
     }
 
     /** Streams of the video that is playing, or the most recently captured ones. */

@@ -29,7 +29,15 @@ final class DlnaController {
 
     static void play(DlnaDevice device, String uri, String mimeType, String title, boolean video)
             throws IOException {
-        String metadata = didl(uri, mimeType, title, video);
+        Track track = new Track("");
+        track.title = title;
+        play(device, uri, mimeType, track, null, video);
+    }
+
+    /** Loads a track with full metadata and starts it. {@code artUri} may be null. */
+    static void play(DlnaDevice device, String uri, String mimeType, Track track, String artUri, boolean video)
+            throws IOException {
+        String metadata = didl(uri, mimeType, track, artUri, video);
         // Some renderers refuse a new URI while playing.
         try {
             stop(device);
@@ -43,6 +51,34 @@ final class DlnaController {
 
     static void stop(DlnaDevice device) throws IOException {
         avTransport(device, "Stop", "");
+    }
+
+    static void resume(DlnaDevice device) throws IOException {
+        avTransport(device, "Play", "<Speed>1</Speed>");
+    }
+
+    static void pause(DlnaDevice device) throws IOException {
+        avTransport(device, "Pause", "");
+    }
+
+    static void seek(DlnaDevice device, long positionMs) throws IOException {
+        avTransport(device, "Seek", "<Unit>REL_TIME</Unit><Target>" + Track.upnpTime(positionMs) + "</Target>");
+    }
+
+    /** Current position in ms, or -1 if unknown. */
+    static long position(DlnaDevice device) throws IOException {
+        String response = soap(device.avTransportControlUrl, device.avTransportType, "GetPositionInfo",
+                "<InstanceID>0</InstanceID>");
+        Matcher m = Pattern.compile("<RelTime>(.*?)</RelTime>").matcher(response);
+        return m.find() ? Track.parseUpnpTime(m.group(1)) : -1;
+    }
+
+    /** "PLAYING", "PAUSED_PLAYBACK", "STOPPED", "TRANSITIONING", ... or "" if unknown. */
+    static String transportState(DlnaDevice device) throws IOException {
+        String response = soap(device.avTransportControlUrl, device.avTransportType, "GetTransportInfo",
+                "<InstanceID>0</InstanceID>");
+        Matcher m = Pattern.compile("<CurrentTransportState>(.*?)</CurrentTransportState>").matcher(response);
+        return m.find() ? m.group(1) : "";
     }
 
     private static void avTransport(DlnaDevice device, String action, String arguments) throws IOException {
@@ -71,16 +107,33 @@ final class DlnaController {
         return text;
     }
 
-    private static String didl(String uri, String mimeType, String title, boolean video) {
+    static String didl(String uri, String mimeType, Track track, String artUri, boolean video) {
         String upnpClass = video ? "object.item.videoItem" : "object.item.audioItem.musicTrack";
-        return "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" "
-                + "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
-                + "xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\">"
-                + "<item id=\"0\" parentID=\"-1\" restricted=\"1\">"
-                + "<dc:title>" + escape(title) + "</dc:title>"
-                + "<upnp:class>" + upnpClass + "</upnp:class>"
-                + "<res protocolInfo=\"http-get:*:" + mimeType + ":*\">" + escape(uri) + "</res>"
-                + "</item></DIDL-Lite>";
+        StringBuilder item = new StringBuilder();
+        item.append("<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" ")
+                .append("xmlns:dc=\"http://purl.org/dc/elements/1.1/\" ")
+                .append("xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" ")
+                .append("xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\">")
+                .append("<item id=\"ytdlna-").append(escape(track.videoId))
+                .append("\" parentID=\"0\" restricted=\"1\">")
+                .append("<dc:title>").append(escape(track.title)).append("</dc:title>");
+        if (!track.artist.isEmpty()) {
+            item.append("<dc:creator>").append(escape(track.artist)).append("</dc:creator>")
+                    .append("<upnp:artist>").append(escape(track.artist)).append("</upnp:artist>");
+        }
+        if (!track.album.isEmpty()) {
+            item.append("<upnp:album>").append(escape(track.album)).append("</upnp:album>");
+        }
+        if (artUri != null && !artUri.isEmpty()) {
+            item.append("<upnp:albumArtURI>").append(escape(artUri)).append("</upnp:albumArtURI>");
+        }
+        item.append("<upnp:class>").append(upnpClass).append("</upnp:class>")
+                .append("<res protocolInfo=\"http-get:*:").append(mimeType).append(":*\"");
+        if (track.durationMs > 0) {
+            item.append(" duration=\"").append(Track.upnpTime(track.durationMs)).append(".000\"");
+        }
+        item.append(">").append(escape(uri)).append("</res></item></DIDL-Lite>");
+        return item.toString();
     }
 
     private static String upnpError(String response) {
