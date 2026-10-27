@@ -27,7 +27,7 @@ final class LocalPlayback {
         Proto.Field smallestAudio = null;
         long smallestBitrate = Long.MAX_VALUE;
         Proto.Field smallestVideo = null;
-        long smallestVideoBitrate = Long.MAX_VALUE;
+        long smallestVideoScore = Long.MAX_VALUE;
         boolean hasVideo = false;
         for (Proto.Field field : fields) {
             if (field.number == SD_FORMATS) {
@@ -38,8 +38,11 @@ final class LocalPlayback {
                 if (mime.startsWith("video/")) {
                     hasVideo = true;
                     long bitrate = Proto.varint(format, F_BITRATE);
-                    if (bitrate > 0 && bitrate < smallestVideoBitrate) {
-                        smallestVideoBitrate = bitrate;
+                    // The most compatible codec first (H.264, then VP9, then AV1), then the
+                    // smallest: AV1 is often the smallest but not decodable on every device.
+                    long score = codecRank(mime) * 1_000_000_000L + bitrate;
+                    if (bitrate > 0 && score < smallestVideoScore) {
+                        smallestVideoScore = score;
                         smallestVideo = field;
                     }
                 } else if (mime.startsWith("audio/")) {
@@ -62,6 +65,12 @@ final class LocalPlayback {
         }
         if (!hasVideo && kept == countFormats(fields)) return null; // Already minimal.
         return out.toByteArray();
+    }
+
+    private static int codecRank(String mime) {
+        if (mime.contains("avc1")) return 0;
+        if (mime.contains("vp9") || mime.contains("vp09")) return 1;
+        return 2;
     }
 
     private static int countFormats(List<Proto.Field> fields) {

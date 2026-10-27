@@ -365,7 +365,13 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
             }
         }
         if (newState != lastState) {
-            if (newState == PlaybackState.STATE_PLAYING && lastState != -1) {
+            boolean resumeIntent = newState == PlaybackState.STATE_PLAYING
+                    // Play pressed while paused: the player buffers first. Resume the renderer
+                    // right away, so it does not depend on the phone's own (reduced) stream.
+                    || (newState == PlaybackState.STATE_BUFFERING && lastState == PlaybackState.STATE_PAUSED);
+            if (resumeIntent && lastState != -1 && lastState != PlaybackState.STATE_PLAYING
+                    && !(lastState == PlaybackState.STATE_BUFFERING && newState == PlaybackState.STATE_PLAYING
+                    && "PLAYING".equals(rendererState))) {
                 renderer.execute(() -> call("Play", this::rendererResume));
             } else if (newState == PlaybackState.STATE_PAUSED && now > ignorePositionUntil) {
                 // Switching videos also reports "paused" for a moment: another queue item
