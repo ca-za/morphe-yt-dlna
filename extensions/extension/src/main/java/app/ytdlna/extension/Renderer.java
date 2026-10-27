@@ -67,9 +67,9 @@ abstract class Renderer {
     /** OpenHome with the whole queue as playlist if the renderer has it, otherwise AVTransport. */
     static Renderer create(DlnaDevice device, String baseUrl, Listener listener, Handler main,
                            BooleanSupplier audioOnly, Covers covers) {
-        return device.hasOpenHomePlaylist()
+        return device.hasOpenHomePlaylist() && !TestHooks.avTransportOnly()
                 ? new OpenHomeRenderer(device, baseUrl, listener, main, audioOnly, covers)
-                : new AvTransportRenderer(device, baseUrl, listener, main, audioOnly);
+                : new AvTransportRenderer(device, baseUrl, listener, main, audioOnly, covers);
     }
 
     /**
@@ -146,6 +146,36 @@ abstract class Renderer {
     boolean onQueue(List<LocalPlayer.QueueEntry> queue) {
         return false;
     }
+
+    // region Titles before their streams
+
+    /**
+     * Address for a title whose streams the app may not have loaded yet. The native proxy holds
+     * a request to it and asks for the title (NeedVideo) until {@link #registerAuto} serves it.
+     */
+    String autoUri(String videoId) {
+        return baseUrl + autoPath(videoId);
+    }
+
+    private static String autoPath(String videoId) {
+        return "/v/" + videoId + "/auto";
+    }
+
+    /** Media type of {@link #autoUri} addresses, as the streams will be served. */
+    String autoMime() {
+        if (audioOnly.getAsBoolean()) return "audio/mp4";
+        return device.supports("application/dash+xml") ? "application/dash+xml" : "video/mp4";
+    }
+
+    /** Makes {@link #autoUri} serve the video's media. */
+    void registerAuto(StreamInfo info) {
+        StreamProxy.Media media = StreamProxy.choose(info, device, audioOnly.getAsBoolean());
+        if (media == null) return;
+        StreamProxy.register(info);
+        StreamProxy.alias(info, media, autoPath(info.videoId));
+    }
+
+    // endregion
 
     /** The app loaded streams of a title that is not playing (usually preloading the next one). */
     void onStreams(StreamInfo info) {

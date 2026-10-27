@@ -39,6 +39,8 @@ final class LocalPlayer {
         final String title;
         final String artist;
         final String iconUrl;
+        /** The app's active queue item when the queue was read. */
+        boolean active;
 
         QueueEntry(long queueId, String videoId, String title, String artist, String iconUrl) {
             this.queueId = queueId;
@@ -222,7 +224,25 @@ final class LocalPlayer {
     /** The app's queue, read now. */
     List<QueueEntry> queue() {
         MediaController c = controller;
-        return readQueue(c == null ? null : c.getQueue());
+        PlaybackState state = c == null ? null : c.getPlaybackState();
+        List<QueueEntry> entries = readQueue(c == null ? null : c.getQueue());
+        long active = state == null ? -1 : state.getActiveQueueItemId();
+        for (QueueEntry entry : entries) entry.active = entry.queueId == active;
+        return entries;
+    }
+
+    /**
+     * Position of the playing title in {@code queue}, -1 if not there. By its id, or else the
+     * active item: YouTube Music may queue the song version of a playing video under another id.
+     */
+    static int indexOfPlaying(List<QueueEntry> queue, String videoId) {
+        for (int i = 0; i < queue.size(); i++) {
+            if (queue.get(i).videoId.equals(videoId)) return i;
+        }
+        for (int i = 0; i < queue.size(); i++) {
+            if (queue.get(i).active) return i;
+        }
+        return -1;
     }
 
     QueueEntry entry(String videoId) {

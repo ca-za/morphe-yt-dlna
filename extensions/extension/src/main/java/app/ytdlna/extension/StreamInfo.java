@@ -75,12 +75,47 @@ final class StreamInfo {
     private static final int VD_VIDEO_ID = 1;
     private static final int VD_TITLE = 15;
     private static final int VD_LENGTH_SECONDS = 16;
+    private static final int VD_THUMBNAILS = 25;
+    private static final int VD_CHANNEL = 33;
+    // Thumbnail list: entries with url, width, height.
+    private static final int THUMB_ENTRY = 1;
+    private static final int THUMB_URL = 1;
+    private static final int THUMB_WIDTH = 2;
 
     String videoId = "";
     String title = "";
     long lengthSeconds;
+    /** Name of the uploading channel. */
+    String channel = "";
+    /** Largest thumbnail of the video, "" if none. */
+    String thumbnailUrl = "";
     final List<Format> formats = new ArrayList<>();
     final long capturedAt = System.currentTimeMillis();
+
+    private static String largestThumbnail(Proto.Field list) {
+        if (list == null || list.wireType != Proto.BYTES) return "";
+        String best = "";
+        long bestWidth = -1;
+        try {
+            for (Proto.Field entry : Proto.parse(list.data)) {
+                if (entry.number != THUMB_ENTRY || entry.wireType != Proto.BYTES) continue;
+                List<Proto.Field> fields = Proto.parse(entry.data);
+                String url = Proto.string(fields, THUMB_URL);
+                long width = Proto.varint(fields, THUMB_WIDTH);
+                if (url.startsWith("http") && width > bestWidth) {
+                    // Many TVs show JPEG only: YouTube has every WebP thumbnail as JPEG too.
+                    if (url.contains("/vi_webp/")) {
+                        url = url.replace("/vi_webp/", "/vi/").replaceAll("\\.webp(\\?|$)", ".jpg$1");
+                    }
+                    best = url;
+                    bestWidth = width;
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            // Unexpected layout: no thumbnail, the default one is used.
+        }
+        return best;
+    }
 
     static StreamInfo parse(byte[] streamingData, byte[] videoDetails) {
         StreamInfo info = new StreamInfo();
@@ -89,6 +124,8 @@ final class StreamInfo {
             info.videoId = Proto.string(vd, VD_VIDEO_ID);
             info.title = Proto.string(vd, VD_TITLE);
             info.lengthSeconds = Proto.varint(vd, VD_LENGTH_SECONDS);
+            info.channel = Proto.string(vd, VD_CHANNEL);
+            info.thumbnailUrl = largestThumbnail(Proto.first(vd, VD_THUMBNAILS));
         }
         for (Proto.Field f : Proto.parse(streamingData)) {
             if ((f.number == SD_FORMATS || f.number == SD_ADAPTIVE_FORMATS) && f.wireType == Proto.BYTES) {
@@ -132,7 +169,7 @@ final class StreamInfo {
             if (f.isAudioOnly()) audio++;
             else if (f.isVideoOnly()) video++;
         }
-        return "videoId=" + videoId + " title=\"" + title + "\" length=" + lengthSeconds + "s"
+        return "videoId=" + videoId + " title=\"" + title + "\" channel=\"" + channel + "\" length=" + lengthSeconds + "s"
                 + " formats=" + formats.size() + " withUrl=" + withUrl
                 + " audioWithUrl=" + audio + " videoWithUrl=" + video;
     }

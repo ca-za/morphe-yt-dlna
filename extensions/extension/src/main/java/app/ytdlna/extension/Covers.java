@@ -6,8 +6,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Cover for the renderer: in YouTube Music the album cover from a music database (if enabled and
- * found), otherwise the YouTube thumbnail. Both are linked directly in the metadata.
+ * Cover and song details for the renderer: in YouTube Music the album cover, album, year and label
+ * from a music database (if enabled and found), otherwise the YouTube thumbnail. The cover is
+ * linked directly in the metadata.
  */
 final class Covers {
     private final Context context;
@@ -23,15 +24,27 @@ final class Covers {
     }
 
     /**
-     * Cover URL for {@code track}, null if none. Sets {@code track.artUrl} to it.
+     * Cover URL for {@code track}, null if none. Sets {@code track.artUrl} to it and fills in what
+     * the music database knows and the app does not: album, length, and for the playing title
+     * (looked up now) also year and label.
      *
-     * @param lookup Look the album cover up now; otherwise only an already found one is used.
+     * @param lookup Look the title up now; otherwise only an already found match is used.
      */
     String forTrack(Track track, boolean lookup) {
         if (lookupEnabled()) {
-            String cover = lookup ? AlbumArt.lookup(track.title, track.artist)
+            AlbumArt.Match match = lookup ? AlbumArt.lookup(track.title, track.artist)
                     : AlbumArt.cached(track.title, track.artist);
-            if (cover != null) track.artUrl = cover;
+            if (match != null) {
+                track.artUrl = match.url;
+                if (match.isSure()) {
+                    if (track.album.isEmpty()) track.album = match.album;
+                    // An estimate until the app has loaded the title's streams.
+                    if (track.durationMs <= 0) track.durationMs = match.durationMs;
+                    String[] details = lookup ? AlbumArt.details(match) : new String[]{match.year, ""};
+                    if (track.year.isEmpty()) track.year = details[0];
+                    if (track.label.isEmpty()) track.label = details[1];
+                }
+            }
         }
         return track.artUrl.isEmpty() ? null : track.artUrl;
     }

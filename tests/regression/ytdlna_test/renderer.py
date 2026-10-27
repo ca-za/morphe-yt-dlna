@@ -24,9 +24,12 @@ class Renderer:
             short = service_type.split(":")[-2]
             self.services[short] = (service_type, urljoin(description_url, _tag(block, "controlURL")))
 
+    #: False while testing the app with a plain AVTransport renderer (the app ignores OpenHome).
+    use_openhome = True
+
     @property
     def openhome(self) -> bool:
-        return "Playlist" in self.services
+        return self.use_openhome and "Playlist" in self.services
 
     def soap(self, service: str, action: str, args: str = "") -> str:
         service_type, url = self.services[service]
@@ -43,22 +46,44 @@ class Renderer:
                     "CurrentTransportState")
 
     def position_ms(self) -> int:
-        if "Time" in self.services:
+        if "Time" in self.services and self.use_openhome:
             return int(_tag(self.soap("Time", "Time"), "Seconds") or 0) * 1000
         rel = _tag(self.soap("AVTransport", "GetPositionInfo", "<InstanceID>0</InstanceID>"), "RelTime")
         h, m, s = (rel or "0:0:0").split(":")
         return int((int(h) * 3600 + int(m) * 60 + float(s)) * 1000)
 
-    def metadata(self) -> dict:
-        """Title, artist, cover and kind of the current title."""
-        if "Info" in self.services:
+    def metadata(self, avtransport: bool = False) -> dict:
+        """Metadata of the current title (from AVTransport if asked, otherwise OpenHome Info if there)."""
+        if "Info" in self.services and self.use_openhome and not avtransport:
             didl = unescape(_tag(self.soap("Info", "Track"), "Metadata"))
         else:
-            didl = unescape(_tag(self.soap("AVTransport", "GetMediaInfo", "<InstanceID>0</InstanceID>"),
-                                 "CurrentURIMetaData"))
-        return {"title": unescape(_tag(didl, "dc:title")), "artist": unescape(_tag(didl, "upnp:artist")),
-                "art": unescape(_tag(didl, "upnp:albumArtURI")), "class": _tag(didl, "upnp:class"),
-                "protocol": (re.search(r'protocolInfo="([^"]*)"', didl) or [None, ""])[1]}
+            didl = unescape(_tag(self.media_info(), "CurrentURIMetaData"))
+        return _didl(didl)
+
+    def media_info(self) -> str:
+        return self.soap("AVTransport", "GetMediaInfo", "<InstanceID>0</InstanceID>")
+
+    def next_metadata(self, avtransport: bool = False) -> dict:
+        """Metadata of the title after the current one: the next playlist entry, or AVTransport's NextURI."""
+        if self.openhome and not avtransport:
+            import base64
+            import struct
+            raw = _tag(self.soap("Playlist", "IdArray"), "Array")
+            ids = list(struct.unpack(f">{len(base64.b64decode(raw)) // 4}I", base64.b64decode(raw))) if raw else []
+            current = int(_tag(self.soap("Playlist", "Id"), "Value") or 0)
+            if current not in ids or ids.index(current) + 1 >= len(ids):
+                return {}
+            entry = unescape(self.soap("Playlist", "ReadList", f"<IdList>{ids[ids.index(current) + 1]}</IdList>"))
+            return _didl(unescape(_tag(entry, "Metadata")))
+        info = self.media_info()
+        meta = _didl(unescape(_tag(info, "NextURIMetaData")))
+        meta["uri"] = unescape(_tag(info, "NextURI"))
+        return meta
+
+    def seek_ms(self, ms: int) -> None:
+        h, rest = divmod(ms // 1000, 3600)
+        self.soap("AVTransport", "Seek", f"<InstanceID>0</InstanceID><Unit>REL_TIME</Unit>"
+                                         f"<Target>{h}:{rest // 60:02d}:{rest % 60:02d}</Target>")
 
     def playlist_size(self) -> int:
         if not self.openhome:
@@ -88,6 +113,15 @@ class Renderer:
             self.soap("Playlist", "Next")
         else:
             self.soap("AVTransport", "Next", "<InstanceID>0</InstanceID>")
+
+
+def _didl(didl: str) -> dict:
+    return {"title": unescape(_tag(didl, "dc:title")), "artist": unescape(_tag(didl, "upnp:artist")),
+            "album": unescape(_tag(didl, "upnp:album")), "date": _tag(didl, "dc:date"),
+            "publisher": unescape(_tag(didl, "dc:publisher")),
+            "art": unescape(_tag(didl, "upnp:albumArtURI")), "class": _tag(didl, "upnp:class"),
+            "duration": (re.search(r'duration="([^"]*)"', didl) or [None, ""])[1],
+            "protocol": (re.search(r'protocolInfo="([^"]*)"', didl) or [None, ""])[1]}
 
 
 def _tag(xml: str, name: str) -> str:

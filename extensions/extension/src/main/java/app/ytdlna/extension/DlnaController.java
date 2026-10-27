@@ -42,6 +42,16 @@ final class DlnaController {
         avTransport(device, "Play", "<Speed>1</Speed>");
     }
 
+    /**
+     * Announces the title after the current one, so the renderer can show "Up next" and play on
+     * without a gap. Optional in UPnP: renderers without it answer with an error.
+     */
+    static void setNext(DlnaDevice device, String uri, String metadata) throws IOException {
+        avTransport(device, "SetNextAVTransportURI",
+                "<NextURI>" + escape(uri) + "</NextURI>"
+                        + "<NextURIMetaData>" + escape(metadata) + "</NextURIMetaData>");
+    }
+
     static void stop(DlnaDevice device) throws IOException {
         avTransport(device, "Stop", "");
     }
@@ -117,7 +127,8 @@ final class DlnaController {
     }
 
     static String didl(String uri, String mimeType, Track track, String artUri, boolean video) {
-        String upnpClass = video ? "object.item.videoItem" : "object.item.audioItem.musicTrack";
+        String upnpClass = !video ? "object.item.audioItem.musicTrack"
+                : Track.musicApp ? "object.item.videoItem.musicVideoClip" : "object.item.videoItem";
         StringBuilder item = new StringBuilder();
         item.append("<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" ")
                 .append("xmlns:dc=\"http://purl.org/dc/elements/1.1/\" ")
@@ -132,6 +143,13 @@ final class DlnaController {
         }
         if (!track.album.isEmpty()) {
             item.append("<upnp:album>").append(escape(track.album)).append("</upnp:album>");
+        }
+        if (!track.year.isEmpty()) {
+            // Only the year is known; ISO 8601 allows the year alone.
+            item.append("<dc:date>").append(escape(track.year)).append("</dc:date>");
+        }
+        if (!track.label.isEmpty()) {
+            item.append("<dc:publisher>").append(escape(track.label)).append("</dc:publisher>");
         }
         if (artUri != null && !artUri.isEmpty()) {
             item.append("<upnp:albumArtURI>").append(escape(artUri)).append("</upnp:albumArtURI>");

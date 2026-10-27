@@ -115,6 +115,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         this.device = device;
         this.streamHost = streamHost == null ? "" : streamHost;
         this.musicApp = context.getPackageName().contains("music");
+        Track.musicApp = musicApp;
         this.covers = new Covers(context, musicApp);
         this.local = new LocalPlayer(context, main, this);
     }

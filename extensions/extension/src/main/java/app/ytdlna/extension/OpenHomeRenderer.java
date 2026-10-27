@@ -167,20 +167,27 @@ final class OpenHomeRenderer extends Renderer {
     @Override
     boolean onQueue(List<LocalPlayer.QueueEntry> queue) {
         if (!playlistStarted) return false;
+        String playingVideo = videoByTrackId.get(currentTrackId);
+        int playing = playingVideo == null ? -1 : LocalPlayer.indexOfPlaying(queue, playingVideo);
+        if (playing < 0) {
+            // The app is still building its queue (as while it reloads the title): entries placed
+            // now would end up before the playing title. The next queue update adds them.
+            Log.d("Playing title " + playingVideo + " not in the app's queue yet");
+            return false;
+        }
+        if (!queue.get(playing).videoId.equals(playingVideo)) {
+            // The playing title under another id in the queue: it is on the renderer already.
+            trackIdByVideo.put(queue.get(playing).videoId, currentTrackId);
+        }
         List<Track> missing = new ArrayList<>();
         for (LocalPlayer.QueueEntry entry : queue) {
             if (!trackIdByVideo.containsKey(entry.videoId) && !refused.contains(entry.videoId)) {
-                missing.add(track(entry));
+                missing.add(Track.fromQueue(entry));
             }
         }
         if (missing.isEmpty()) return false;
         covers.prefetch(missing);
         // The titles after the playing one first (the next one is needed soonest), then those before.
-        int playing = -1;
-        String playingVideo = videoByTrackId.get(currentTrackId);
-        for (int i = 0; i < queue.size(); i++) {
-            if (queue.get(i).videoId.equals(playingVideo)) playing = i;
-        }
         List<Integer> order = new ArrayList<>();
         for (int i = playing + 1; i < queue.size(); i++) order.add(i);
         for (int i = 0; i < Math.max(playing, 0); i++) order.add(i);
@@ -193,7 +200,7 @@ final class OpenHomeRenderer extends Renderer {
             Integer after = i == 0 ? Integer.valueOf(0) : trackIdByVideo.get(queue.get(i - 1).videoId);
             StreamInfo captured = StreamCapture.get(entry.videoId);
             if (captured != null) registerAuto(captured);
-            Track track = track(entry);
+            Track track = Track.fromQueue(entry);
             try {
                 insert(after == null ? 0 : after, track, covers.forTrack(track, false));
             } catch (Exception e) {
@@ -211,32 +218,13 @@ final class OpenHomeRenderer extends Renderer {
         if (trackIdByVideo.containsKey(info.videoId)) registerAuto(info);
     }
 
-    private static Track track(LocalPlayer.QueueEntry entry) {
-        Track track = new Track(entry.videoId);
-        track.title = entry.title;
-        track.artist = entry.artist;
-        track.artUrl = entry.iconUrl.startsWith("http") ? entry.iconUrl
-                : "https://i.ytimg.com/vi/" + entry.videoId + "/hqdefault.jpg";
-        return track;
-    }
-
     private int insert(int afterId, Track track, String art) throws Exception {
-        String uri = baseUrl + "/v/" + track.videoId + "/auto";
+        String uri = autoUri(track.videoId);
         boolean audio = audioOnly.getAsBoolean();
-        String mime = audio ? "audio/mp4"
-                : device.supports("application/dash+xml") ? "application/dash+xml" : "video/mp4";
-        int id = OpenHome.insert(device, afterId, uri, DlnaController.didl(uri, mime, track, art, !audio));
+        int id = OpenHome.insert(device, afterId, uri, DlnaController.didl(uri, autoMime(), track, art, !audio));
         trackIdByVideo.put(track.videoId, id);
         videoByTrackId.put(id, track.videoId);
         return id;
-    }
-
-    /** Makes {@code /v/<videoId>/auto} serve the video's media. */
-    private void registerAuto(StreamInfo info) {
-        StreamProxy.Media media = StreamProxy.choose(info, device, audioOnly.getAsBoolean());
-        if (media == null) return;
-        StreamProxy.register(info);
-        StreamProxy.alias(info, media, "/v/" + info.videoId + "/auto");
     }
 
     // endregion

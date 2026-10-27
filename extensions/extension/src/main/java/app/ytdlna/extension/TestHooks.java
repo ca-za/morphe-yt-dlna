@@ -39,6 +39,14 @@ final class TestHooks {
         return ENABLED;
     }
 
+    /** Tests of plain AVTransport renderers: OpenHome of the test renderer is not used. */
+    private static volatile boolean avTransportOnly;
+
+    static boolean avTransportOnly() {
+        // isEnabled(), not ENABLED: the patch switches the method on, the constant is inlined.
+        return isEnabled() && avTransportOnly;
+    }
+
     /** Registers the command receiver once, if enabled. */
     static synchronized void register(Context context) {
         if (registered || !isEnabled() || context == null) return;
@@ -78,6 +86,9 @@ final class TestHooks {
                         editor.putStringSet("manual_devices", devices);
                     }
                     if (host != null) editor.putString("stream_host", host);
+                    if (intent.hasExtra("avTransportOnly")) {
+                        avTransportOnly = Boolean.parseBoolean(intent.getStringExtra("avTransportOnly"));
+                    }
                     if (intent.hasExtra("albumArt")) {
                         context.getSharedPreferences("morphe_prefs", Context.MODE_PRIVATE).edit()
                                 .putBoolean("ytdlna_album_art_lookup",

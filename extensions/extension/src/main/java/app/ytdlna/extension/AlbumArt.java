@@ -24,8 +24,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 /**
- * Square album covers for YouTube Music titles, from public music databases that need no API key:
- * Deezer first, then the iTunes Search API. The cover URL is sent to the renderer as is.
+ * Album covers and song details (album, year, label, length) for YouTube Music titles, from public
+ * music databases that need no API key: Deezer first, then the iTunes Search API. The cover URL is
+ * sent to the renderer as is.
  * <p>
  * Can be turned off in the Morphe settings (it sends title and artist to these services).
  */
@@ -35,10 +36,13 @@ final class AlbumArt {
     private static final String PREF_ENABLED = "ytdlna_album_art_lookup";
 
     private static final int TIMEOUT_MS = 4000;
-    private static final String NOT_FOUND = "";
+    private static final int DETAILS_TIMEOUT_MS = 2000;
+    private static final Match NOT_FOUND = new Match("", "", "", 0, "", -1, "");
 
-    /** Title + artist -> cover URL, or NOT_FOUND. */
-    private static final Map<String, String> cache = new ConcurrentHashMap<>();
+    /** Title + artist -> best match, or NOT_FOUND. */
+    private static final Map<String, Match> cache = new ConcurrentHashMap<>();
+    /** Deezer album id -> {year, label}. */
+    private static final Map<String, String[]> albumDetails = new ConcurrentHashMap<>();
     private static final ExecutorService lookups = Executors.newFixedThreadPool(4);
 
     /** Parts of video titles that are not part of the song title. */
@@ -58,21 +62,21 @@ final class AlbumArt {
         }
     }
 
-    /** Cover URL if already looked up, otherwise null. */
-    static String cached(String title, String artist) {
-        String url = cache.get(key(title, artist));
-        return url == null || url.equals(NOT_FOUND) ? null : url;
+    /** The match if already looked up, otherwise null. */
+    static Match cached(String title, String artist) {
+        Match match = cache.get(key(title, artist));
+        return match == NOT_FOUND ? null : match;
     }
 
-    /** Looks up a cover. Blocks for at most a few seconds. Returns null if none was found. */
-    static String lookup(String title, String artist) {
+    /** Looks up a title. Blocks for at most a few seconds. Returns null if nothing was found. */
+    static Match lookup(String title, String artist) {
         String key = key(title, artist);
-        String cachedUrl = cache.get(key);
-        if (cachedUrl != null) return cachedUrl.equals(NOT_FOUND) ? null : cachedUrl;
+        Match cachedMatch = cache.get(key);
+        if (cachedMatch != null) return cachedMatch == NOT_FOUND ? null : cachedMatch;
 
         String cleanTitle = clean(title);
-        Candidate deezer = null;
-        Candidate itunes = null;
+        Match deezer = null;
+        Match itunes = null;
         try {
             deezer = deezer(cleanTitle, artist);
         } catch (Exception e) {
@@ -86,18 +90,41 @@ final class AlbumArt {
             }
         }
         // A good match from either source, Deezer first; otherwise the best of what was found.
-        Candidate best = deezer;
+        Match best = deezer;
         if (itunes != null && (best == null || best.score < GOOD_MATCH && itunes.score > best.score)) best = itunes;
-        String url = best == null ? null : best.url;
-        cache.put(key, url == null ? NOT_FOUND : url);
-        Log.d("Cover for \"" + cleanTitle + "\" / \"" + artist + "\": " + url
-                + (best == null ? "" : " (" + best.source + ", \"" + best.album + "\", score " + best.score + ")"));
-        return url;
+        cache.put(key, best == null ? NOT_FOUND : best);
+        Log.d("Cover for \"" + cleanTitle + "\" / \"" + artist + "\": "
+                + (best == null ? "none" : best.url + " (" + best.source + ", \"" + best.album + "\""
+                + (best.year.isEmpty() ? "" : " " + best.year) + ", score " + best.score + ")"));
+        return best;
+    }
+
+    /**
+     * Release year and label of a match's album: {year, label}, "" where unknown. Deezer has them
+     * in its album data (one more request, made only for the playing title); iTunes has the year.
+     */
+    static String[] details(Match match) {
+        if (match.deezerAlbumId.isEmpty()) return new String[]{match.year, ""};
+        String[] known = albumDetails.get(match.deezerAlbumId);
+        if (known != null) return known;
+        String[] details = {match.year, ""};
+        try {
+            JSONObject album = getJson("https://api.deezer.com/album/" + match.deezerAlbumId, DETAILS_TIMEOUT_MS);
+            String date = album.optString("release_date");
+            if (date.length() >= 4 && date.substring(0, 4).matches("\\d{4}") && !date.startsWith("0000")) {
+                details[0] = date.substring(0, 4);
+            }
+            details[1] = album.optString("label");
+        } catch (Exception e) {
+            Log.d("Deezer album lookup failed: " + e.getMessage());
+        }
+        albumDetails.put(match.deezerAlbumId, details);
+        return details;
     }
 
     /** Looks up several titles in parallel, waiting at most {@code timeoutMs} in total. */
     static void prefetch(List<String[]> titlesAndArtists, long timeoutMs) {
-        List<Callable<String>> tasks = new ArrayList<>();
+        List<Callable<Match>> tasks = new ArrayList<>();
         for (String[] item : titlesAndArtists) {
             if (!cache.containsKey(key(item[0], item[1]))) tasks.add(() -> lookup(item[0], item[1]));
         }
@@ -119,17 +146,36 @@ final class AlbumArt {
             "(?i)\\b(hits|best of|greatest|collection|decades?|anthology|essential|now that|compilation"
                     + "|various|party|summer|top \\d+|\\d0s|\\d0er|playlist|karaoke|tribute|workout)\\b");
 
-    private static final class Candidate {
+    /** A title found in a music database. */
+    static final class Match {
+        /** Album cover. */
         final String url;
         final String album;
+        /** Release year, "" if the source does not have it in its search results (Deezer). */
+        final String year;
+        /** Length of the found track, 0 if unknown. */
+        final long durationMs;
+        /** For {@link #details}, "" for other sources than Deezer. */
+        final String deezerAlbumId;
         final int score;
         final String source;
 
-        Candidate(String url, String album, int score, String source) {
+        Match(String url, String album, String year, long durationMs, String deezerAlbumId, int score, String source) {
             this.url = url;
             this.album = album;
+            this.year = year;
+            this.durationMs = durationMs;
+            this.deezerAlbumId = deezerAlbumId;
             this.score = score;
             this.source = source;
+        }
+
+        /**
+         * The same song, not just a similar one: its album, year and length can be shown. A
+         * weaker match is still good enough for a cover.
+         */
+        boolean isSure() {
+            return score >= GOOD_MATCH;
         }
     }
 
@@ -146,7 +192,7 @@ final class AlbumArt {
     }
 
     /** Deezer search: https://developers.deezer.com/api/search, 1000x1000 covers. */
-    private static Candidate deezer(String title, String artist) throws Exception {
+    private static Match deezer(String title, String artist) throws Exception {
         String query = artist.isEmpty()
                 ? title
                 : "artist:\"" + artist + "\" track:\"" + title + "\"";
@@ -157,7 +203,7 @@ final class AlbumArt {
                     .optJSONArray("data");
         }
         if (data == null) return null;
-        Candidate best = null;
+        Match best = null;
         for (int i = 0; i < data.length(); i++) {
             JSONObject track = data.getJSONObject(i);
             JSONObject trackArtist = track.optJSONObject("artist");
@@ -166,18 +212,19 @@ final class AlbumArt {
             if (album == null || !album.optString("cover_xl").startsWith("http")) continue;
             int score = score(title, track.optString("title"), album.optString("title"), false);
             if (best == null || score > best.score) {
-                best = new Candidate(album.optString("cover_xl"), album.optString("title"), score, "Deezer");
+                best = new Match(album.optString("cover_xl"), album.optString("title"), "",
+                        track.optLong("duration") * 1000, album.optString("id"), score, "Deezer");
             }
         }
         return best;
     }
 
     /** iTunes Search API: https://performance-partners.apple.com/search-api, any size up to 3000x3000. */
-    private static Candidate itunes(String title, String artist) throws Exception {
+    private static Match itunes(String title, String artist) throws Exception {
         JSONArray results = getJson("https://itunes.apple.com/search?media=music&entity=song&limit=10&term="
                 + encode((artist + " " + title).trim())).optJSONArray("results");
         if (results == null) return null;
-        Candidate best = null;
+        Match best = null;
         for (int i = 0; i < results.length(); i++) {
             JSONObject song = results.getJSONObject(i);
             if (!artist.isEmpty() && !similar(artist, song.optString("artistName"))) continue;
@@ -187,8 +234,10 @@ final class AlbumArt {
             boolean various = !collectionArtist.isEmpty() && !similar(artist, collectionArtist);
             int score = score(title, song.optString("trackName"), song.optString("collectionName"), various);
             if (best == null || score > best.score) {
-                best = new Candidate(cover.replace("100x100bb", "1200x1200bb"),
-                        song.optString("collectionName"), score, "iTunes");
+                String released = song.optString("releaseDate");
+                best = new Match(cover.replace("100x100bb", "1200x1200bb"), song.optString("collectionName"),
+                        released.length() >= 4 && released.substring(0, 4).matches("\\d{4}") ? released.substring(0, 4) : "",
+                        song.optLong("trackTimeMillis"), "", score, "iTunes");
             }
         }
         return best;
@@ -199,9 +248,13 @@ final class AlbumArt {
     // region Helpers
 
     private static JSONObject getJson(String url) throws Exception {
+        return getJson(url, TIMEOUT_MS);
+    }
+
+    private static JSONObject getJson(String url, int timeoutMs) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-        connection.setConnectTimeout(TIMEOUT_MS);
-        connection.setReadTimeout(TIMEOUT_MS);
+        connection.setConnectTimeout(timeoutMs);
+        connection.setReadTimeout(timeoutMs);
         connection.setRequestProperty("Accept", "application/json");
         try {
             int status = connection.getResponseCode();

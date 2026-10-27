@@ -191,11 +191,29 @@ def renderer_metadata(ctx: Context) -> Result:
         problems.append("no cover")
     if ctx.app == "music" and meta.get("art") and not re.search(r"dzcdn|mzstatic", meta["art"]):
         problems.append("cover is not an album cover")
+    if not meta.get("artist"):
+        problems.append("no artist" + (" (channel)" if ctx.app == "yt" else ""))
+    if not meta.get("duration"):
+        problems.append("no duration")
+    if ctx.app == "music":
+        # Album and year come from the app or the music database (the test title is well known).
+        problems += [f"no {name}" for name in ("album", "date") if not meta.get(name)]
     playlist = ctx.renderer.playlist_size()
     meta["playlistSize"] = playlist
-    if ctx.renderer.openhome and ctx.app == "music" and playlist < 2:
-        problems.append(f"OpenHome playlist has {playlist} entries")
-    return Result("fail" if problems else "pass", ", ".join(problems) or meta.get("title", ""), meta)
+    if ctx.renderer.openhome and ctx.app == "music":
+        if playlist < 2:
+            problems.append(f"OpenHome playlist has {playlist} entries")
+        # "Up next": the next entry has its title, and a length once known (exact or estimated).
+        upcoming = until(lambda: (lambda m: m if m.get("title") and m.get("duration") else None)(
+            ctx.renderer.next_metadata()), 10) or ctx.renderer.next_metadata()
+        meta["next"] = upcoming
+        if not upcoming.get("title"):
+            problems.append("next entry without title")
+        elif not upcoming.get("duration"):
+            problems.append("next entry without duration")
+    detail = ", ".join(problems) or " · ".join(
+        v for v in (meta.get("title"), meta.get("artist"), meta.get("album"), meta.get("date"), meta.get("publisher")) if v)
+    return Result("fail" if problems else "pass", detail, meta)
 
 
 def local_reduced(ctx: Context) -> Result:
@@ -362,7 +380,8 @@ def _switch(ctx: Context, icon: str, expect: str) -> Result:
     m = ctx.logs.wait(rf"Switching the renderer to {expect}", 12, since)
     if not m:
         return Result("fail", f"renderer not switched to {expect}")
-    wanted = "object.item.audioItem" if expect == "audio" else "object.item.videoItem"
+    # Music videos are announced as such (renderers may show a music video screen).
+    wanted = "object.item.audioItem" if expect == "audio" else "object.item.videoItem.musicVideoClip"
     meta = until(lambda: (lambda md: md if md["class"].startswith(wanted) else None)(ctx.renderer.metadata()),
                  12) or ctx.renderer.metadata()
     playing = renderer_state_is(ctx, "PLAYING", 10)
@@ -410,6 +429,52 @@ def stop_cast(ctx: Context) -> Result:
     return Result("fail" if problems else "pass", ", ".join(problems))
 
 
+def avtransport_next(ctx: Context) -> Result:
+    """Renderers without OpenHome get the next title (SetNextAVTransportURI) and the phone follows."""
+    ctx.control.cmd("setup", avTransportOnly="true")
+    ctx.renderer.use_openhome = False
+    try:
+        started = start_cast(ctx)
+        if started.status != "pass":
+            return Result("fail", f"cast start: {started.detail}")
+        if "AvTransportRenderer" not in started.detail:
+            return Result("fail", f"not cast as plain AVTransport ({started.detail})")
+        if not renderer_state_is(ctx, "PLAYING", 25):
+            return Result("fail", f"renderer state {ctx.renderer.state()}")
+        current = ctx.renderer.metadata(avtransport=True)
+        upcoming = until(lambda: (lambda m: m if m.get("uri") else None)(ctx.renderer.next_metadata(avtransport=True)),
+                         15) or {}
+        evidence = {"current": current, "next": upcoming}
+        if not upcoming.get("uri"):
+            return Result("fail", "no next title on the renderer", evidence)
+        problems = [f"next title without {name}" for name in ("title", "duration") if not upcoming.get(name)]
+        # Near the end the renderer moves on to the next title by itself; the phone follows.
+        since = ctx.logs.mark()
+        duration = current.get("duration", "")
+        h, m, sec = (duration.split(".")[0] or "0:0:0").split(":")
+        total = (int(h) * 3600 + int(m) * 60 + int(sec)) * 1000
+        if total <= 10_000:
+            return Result("fail", f"current title has no usable duration ({duration})", evidence)
+        ctx.renderer.seek_ms(total - 6000)
+        moved = ctx.logs.wait(r"Renderer moved on to the next title (\S+)", 30, since)
+        followed = ctx.logs.wait(r"Phone follows the renderer to (\S+)", 15, since)
+        playing = renderer_state_is(ctx, "PLAYING", 25)
+        title = until(lambda: (lambda t: t if t == upcoming.get("title") else None)(
+            ctx.renderer.metadata(avtransport=True).get("title")), 15)
+        evidence.update({"moved": bool(moved), "followed": bool(followed), "playing": playing})
+        problems += [p for p, bad in [("renderer did not move on", not moved), ("phone did not follow", not followed),
+                                      ("renderer not playing the next title", not (playing and title))] if bad]
+        return Result("fail" if problems else "pass",
+                      ", ".join(problems) or f"next: {upcoming.get('title')} ({upcoming.get('duration')})", evidence)
+    finally:
+        ctx.renderer.use_openhome = True
+        ctx.control.cmd("setup", avTransportOnly="false")
+        try:
+            ctx.control.cmd("stop")
+        except Exception:
+            pass
+
+
 def no_crash(ctx: Context) -> Result:
     """The app did not crash during the run."""
     crashes = ctx.logs.find_all(r"FATAL EXCEPTION|AndroidRuntime.*" + re.escape(ctx.package))
@@ -449,6 +514,7 @@ SCENARIOS = [
     ("video_mode", video_mode, {"music"}),
     ("screen_lock", screen_lock, {"yt", "music"}),
     ("stop_cast", stop_cast, {"yt", "music"}),
+    ("avtransport_next", avtransport_next, {"music"}),
     ("no_crash", no_crash, {"yt", "music"}),
 ]
 # Without these, the remaining scenarios can not run.

@@ -8,9 +8,16 @@ final class Track {
     String title = "";
     String artist = "";
     String album = "";
+    /** Release year, "" if unknown. */
+    String year = "";
+    /** Record label, "" if unknown. */
+    String label = "";
     /** Cover image, http(s). */
     String artUrl = "";
     long durationMs;
+
+    /** Casting from YouTube Music: videos are music videos. Set when a session starts. */
+    static volatile boolean musicApp;
 
     Track(String videoId) {
         this.videoId = videoId;
@@ -24,10 +31,13 @@ final class Track {
         Track track = new Track(info.videoId);
         track.title = info.title;
         track.durationMs = info.lengthSeconds * 1000;
-        track.artUrl = "https://i.ytimg.com/vi/" + info.videoId + "/hqdefault.jpg";
+        // YouTube: the channel is the artist, unless the app's media session knows better.
+        track.artist = info.channel;
+        track.artUrl = info.thumbnailUrl.isEmpty()
+                ? "https://i.ytimg.com/vi/" + info.videoId + "/hqdefault.jpg" : info.thumbnailUrl;
         if (metadata != null && sameTitle(info.title, metadata.getString(MediaMetadata.METADATA_KEY_TITLE))) {
             String artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST);
-            if (artist != null) track.artist = artist;
+            if (artist != null && !artist.isEmpty()) track.artist = artist;
             String album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM);
             if (album != null) track.album = album;
             long duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION);
@@ -43,6 +53,18 @@ final class Track {
                 }
             }
         }
+        return track;
+    }
+
+    /** A title of the app's queue, before the app has loaded its streams. */
+    static Track fromQueue(LocalPlayer.QueueEntry entry) {
+        Track track = new Track(entry.videoId);
+        track.title = entry.title;
+        track.artist = entry.artist;
+        track.artUrl = entry.iconUrl.startsWith("http") ? entry.iconUrl
+                : "https://i.ytimg.com/vi/" + entry.videoId + "/hqdefault.jpg";
+        StreamInfo captured = StreamCapture.get(entry.videoId);
+        if (captured != null && captured.lengthSeconds > 0) track.durationMs = captured.lengthSeconds * 1000;
         return track;
     }
 
