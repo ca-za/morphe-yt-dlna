@@ -11,6 +11,7 @@ Status values:
 
 import re
 import time
+import urllib.request
 from dataclasses import dataclass, field
 
 from .control import Control
@@ -429,6 +430,59 @@ def stop_cast(ctx: Context) -> Result:
     return Result("fail" if problems else "pass", ", ".join(problems))
 
 
+def hls_playback(ctx: Context) -> Result:
+    """Renderers without DASH get HLS (fMP4, H.264/AAC): the TV plays it and its position advances."""
+    ctx.control.cmd("setup", preferHls="true")
+    try:
+        if ctx.app == "music":
+            ctx.facts.pop("title", None)
+        started = start_cast(ctx)
+        if started.status != "pass":
+            return Result("fail", f"cast start: {started.detail}")
+        evidence = {"format": started.detail}
+        if "HLS" not in started.detail:
+            return Result("fail", f"not cast as HLS ({started.detail})", evidence)
+        meta = until(lambda: (lambda m: m if "mpegurl" in m.get("protocol", "") else None)(ctx.renderer.metadata()),
+                     10) or ctx.renderer.metadata()
+        evidence["protocol"] = meta.get("protocol")
+        # The playlists as the renderer gets them (the phone's proxy is forwarded to this computer).
+        video_id = started.evidence.get("videoId", ctx.video_id)
+        master = _http(f"http://127.0.0.1:8720/v/{video_id}/master.m3u8")
+        variants = re.findall(r"^(\d+\.m3u8)$", master, re.M)
+        media = _http(f"http://127.0.0.1:8720/v/{video_id}/{variants[0]}") if variants else ""
+        evidence.update({"variants": len(variants), "segments": media.count("#EXTINF"),
+                         "master": master[:400]})
+        problems = []
+        if not variants:
+            problems.append("master playlist without variants")
+        elif media.count("#EXTINF") < 2:
+            problems.append("media playlist without segments")
+        if not renderer_state_is(ctx, "PLAYING", 30):
+            problems.append(f"renderer state {ctx.renderer.state()}")
+        else:
+            p1 = ctx.renderer.position_ms()
+            p2 = until(lambda: (lambda p: p if p >= p1 + 3000 else None)(ctx.renderer.position_ms()), 15)
+            evidence["positions"] = [p1, p2]
+            if not p2:
+                problems.append("renderer position does not advance")
+        return Result("fail" if problems else "pass", ", ".join(problems) or
+                      f"{started.detail.split(',')[0]}, {len(variants)} variants, {evidence['segments']} segments",
+                      evidence)
+    finally:
+        ctx.control.cmd("setup", preferHls="false")
+        try:
+            ctx.control.cmd("stop")
+        except Exception:
+            pass
+
+
+def _http(url: str) -> str:
+    try:
+        return urllib.request.urlopen(url, timeout=15).read().decode("utf-8", "replace")
+    except Exception as e:  # The evidence shows what went wrong.
+        return f"ERROR {e}"
+
+
 def avtransport_next(ctx: Context) -> Result:
     """Renderers without OpenHome get the next title (SetNextAVTransportURI) and the phone follows."""
     ctx.control.cmd("setup", avTransportOnly="true")
@@ -514,6 +568,7 @@ SCENARIOS = [
     ("video_mode", video_mode, {"music"}),
     ("screen_lock", screen_lock, {"yt", "music"}),
     ("stop_cast", stop_cast, {"yt", "music"}),
+    ("hls_playback", hls_playback, {"yt"}),
     ("avtransport_next", avtransport_next, {"music"}),
     ("no_crash", no_crash, {"yt", "music"}),
 ]

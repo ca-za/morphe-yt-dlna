@@ -86,6 +86,9 @@ final class TestHooks {
                         editor.putStringSet("manual_devices", devices);
                     }
                     if (host != null) editor.putString("stream_host", host);
+                    if (intent.hasExtra("preferHls")) {
+                        StreamProxy.preferHls = Boolean.parseBoolean(intent.getStringExtra("preferHls"));
+                    }
                     if (intent.hasExtra("avTransportOnly")) {
                         avTransportOnly = Boolean.parseBoolean(intent.getStringExtra("avTransportOnly"));
                     }

@@ -7,6 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::events;
+use crate::hls;
 use crate::http::{self, RangeResult, Request};
 use crate::registry::{self, Entry, Stream};
 use crate::upstream;
@@ -113,23 +114,52 @@ fn respond<W: Write>(request: &Request, out: &mut W) -> io::Result<bool> {
         return Ok(request.keep_alive);
     };
     match entry.as_ref() {
-        Entry::Text { mime, body } => {
-            http::write_head(
-                out,
-                200,
-                &[
-                    ("Content-Type", format!("{mime}; charset=utf-8")),
-                    ("Content-Length", body.len().to_string()),
-                ],
-                request.keep_alive,
-            )?;
-            if !head_only {
-                out.write_all(body)?;
-            }
-            Ok(request.keep_alive)
-        }
+        Entry::Text { mime, body } => write_text(out, mime, body, request, head_only),
         Entry::Stream(stream) => serve_stream(stream, request, head_only, out),
+        Entry::Hls(media) => match hls_playlist(media) {
+            Ok(body) => write_text(out, "application/vnd.apple.mpegurl", &body, request, head_only),
+            Err(e) => {
+                crate::info!("HLS playlist for {} failed: {e}", request.path);
+                http::write_head(out, 502, &[("Content-Length", "0".into())], false)?;
+                Ok(false)
+            }
+        },
     }
+}
+
+fn write_text<W: Write>(out: &mut W, mime: &str, body: &[u8], request: &Request, head_only: bool) -> io::Result<bool> {
+    http::write_head(
+        out,
+        200,
+        &[
+            ("Content-Type", format!("{mime}; charset=utf-8")),
+            ("Content-Length", body.len().to_string()),
+        ],
+        request.keep_alive,
+    )?;
+    if !head_only {
+        out.write_all(body)?;
+    }
+    Ok(request.keep_alive)
+}
+
+/// The media playlist, built from the stream's segment index on first use.
+fn hls_playlist(media: &registry::HlsMedia) -> io::Result<std::sync::Arc<Vec<u8>>> {
+    let mut cached = media.playlist.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(body) = cached.as_ref() {
+        return Ok(body.clone());
+    }
+    let range = format!("bytes={}-{}", media.index_start, media.index_end);
+    let mut response = upstream::get(&media.url, Some(&range))?;
+    let mut index = Vec::new();
+    // A segment index is a few KB; the limit guards against a wrong range.
+    (&mut response.reader).take(4 << 20).read_to_end(&mut index)?;
+    let segments = hls::parse_sidx(&index, media.index_start)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no usable segment index"))?;
+    let body = std::sync::Arc::new(hls::media_playlist(&media.uri, media.init_end, &segments).into_bytes());
+    crate::debug!("HLS playlist with {} segments for {}", segments.len(), media.uri);
+    *cached = Some(body.clone());
+    Ok(body)
 }
 
 /// How long a request for a not yet loaded playlist item waits for its streams.

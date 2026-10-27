@@ -76,6 +76,25 @@ pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativePutText(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativePutHls(
+    mut env: JNIEnv,
+    _class: JClass,
+    path: JString,
+    uri: JString,
+    url: JString,
+    init_end: jlong,
+    index_start: jlong,
+    index_end: jlong,
+) {
+    let path = string(&mut env, &path);
+    let uri = string(&mut env, &uri);
+    let url = string(&mut env, &url);
+    guarded((), || {
+        registry::put_hls(path, uri, url, init_end.max(0) as u64, index_start.max(0) as u64, index_end.max(0) as u64)
+    });
+}
+
+#[no_mangle]
 pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativePutStream(
     mut env: JNIEnv,
     _class: JClass,

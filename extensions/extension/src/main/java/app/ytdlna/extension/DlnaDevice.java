@@ -64,7 +64,10 @@ final class DlnaDevice {
     boolean supports(String mimeType) {
         String sink = sinkProtocols;
         // Unknown: assume yes and let the renderer decide.
-        return sink == null || sink.isEmpty() || sink.contains(":" + mimeType + ":") || sink.contains(":*:*");
+        if (sink == null || sink.isEmpty()) return true;
+        // Media types are case-insensitive ("application/x-mpegURL" = "application/x-mpegurl").
+        String lower = sink.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains(":" + mimeType.toLowerCase(java.util.Locale.ROOT) + ":") || lower.contains(":*:*");
     }
 
     /** Downloads and parses the device description. */

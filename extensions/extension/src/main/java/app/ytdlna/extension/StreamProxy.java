@@ -15,6 +15,8 @@ import java.util.List;
  * Paths:
  * <ul>
  *   <li>{@code /v/<videoId>/manifest.mpd} - DASH manifest with separate video and audio tracks.</li>
+ *   <li>{@code /v/<videoId>/master.m3u8} - the same as HLS (H.264/AAC), for renderers without DASH;
+ *   {@code <formatIndex>.m3u8} are its media playlists, built by the proxy from the segment index.</li>
  *   <li>{@code /v/<videoId>/<formatIndex>.<ext>} - one format, proxied with Range support.</li>
  *   <li>{@code /v/<videoId>/auto} - the media chosen for the renderer (OpenHome playlist entries).</li>
  * </ul>
@@ -23,6 +25,12 @@ import java.util.List;
 final class StreamProxy {
     private static final int PREFERRED_PORT = 8720;
     private static final int MAX_VIDEO_HEIGHT = 1080;
+    static final String HLS_MIME = "application/vnd.apple.mpegurl";
+    /** Mime types renderers announce for HLS. */
+    private static final String[] HLS_MIMES = {HLS_MIME, "application/x-mpegURL", "audio/mpegurl", "audio/x-mpegurl"};
+
+    /** Tests: HLS even for renderers that take DASH. */
+    static volatile boolean preferHls;
 
     /** What to send to the renderer. */
     static final class Media {
@@ -68,6 +76,14 @@ final class StreamProxy {
         if (dash(info) != null) {
             NativeProxy.nativePutText(prefix + "manifest.mpd", "application/dash+xml", manifest(info));
         }
+        if (hls(info) != null) {
+            NativeProxy.nativePutText(prefix + "master.m3u8", HLS_MIME, hlsMaster(info));
+            for (StreamInfo.Format f : hlsTracks(info)) {
+                String file = fileName(info, f);
+                NativeProxy.nativePutHls(prefix + info.formats.indexOf(f) + ".m3u8", file, f.url,
+                        f.initEnd, f.indexStart, f.indexEnd);
+            }
+        }
         for (StreamInfo.Format format : info.formats) {
             if (!format.hasUrl()) continue;
             NativeProxy.nativePutStream(formatPath(info, format), format.container(), format.url, format.contentLength);
@@ -80,6 +96,11 @@ final class StreamProxy {
             NativeProxy.nativePutText(path, media.mimeType, manifest(info));
             return;
         }
+        if (media.mimeType.equals(HLS_MIME)) {
+            // Its media playlists are found relative to the path, next to the master.
+            NativeProxy.nativePutText(path, media.mimeType, hlsMaster(info));
+            return;
+        }
         String file = media.path.substring(media.path.lastIndexOf('/') + 1);
         StreamInfo.Format format = info.formats.get(Integer.parseInt(file.substring(0, file.indexOf('.'))));
         NativeProxy.nativePutStream(path, format.container(), format.url, format.contentLength);
@@ -87,11 +108,70 @@ final class StreamProxy {
 
     // region Media selection
 
-    /** The best media for a renderer: audio for YouTube Music, otherwise DASH or a muxed file. */
+    /**
+     * The best media for a renderer: audio for YouTube Music, otherwise DASH, HLS (renderers
+     * without DASH) or a muxed file (at most 360p).
+     */
     static Media choose(StreamInfo info, DlnaDevice device, boolean audioOnly) {
         if (audioOnly) return audio(info);
-        Media media = device.supports("application/dash+xml") ? dash(info) : null;
+        Media media = null;
+        if (preferHls && supportsHls(device)) media = hls(info);
+        if (media == null && device.supports("application/dash+xml")) media = dash(info);
+        if (media == null && supportsHls(device)) media = hls(info);
         return media != null ? media : muxed(info);
+    }
+
+    /** Media type of {@link #choose} for a video before its streams are known. */
+    static String videoMime(DlnaDevice device) {
+        if (preferHls && supportsHls(device)) return HLS_MIME;
+        if (device.supports("application/dash+xml")) return "application/dash+xml";
+        return supportsHls(device) ? HLS_MIME : "video/mp4";
+    }
+
+    private static boolean supportsHls(DlnaDevice device) {
+        for (String mime : HLS_MIMES) {
+            if (device.supports(mime)) return true;
+        }
+        return false;
+    }
+
+    /** HLS with H.264 video (up to 1080p) and AAC audio. Null if the video lacks them. */
+    static Media hls(StreamInfo info) {
+        List<StreamInfo.Format> video = hlsTracks(info);
+        if (video.size() < 2 || !video.get(video.size() - 1).isAudioOnly()) return null;
+        return new Media("/v/" + info.videoId + "/master.m3u8", HLS_MIME, true, "HLS " + video.get(0).height + "p");
+    }
+
+    /** Video tracks for HLS, best first, then the audio track; empty if one of them is missing. */
+    private static List<StreamInfo.Format> hlsTracks(StreamInfo info) {
+        List<StreamInfo.Format> tracks = new ArrayList<>();
+        // HLS has no VP9: H.264 only.
+        for (StreamInfo.Format f : videoTracks(info, "video/mp4")) {
+            if (f.codecs().startsWith("avc1") && f.initEnd > 0) tracks.add(f);
+        }
+        StreamInfo.Format audio = bestAudio(info, "audio/mp4");
+        if (tracks.isEmpty() || audio == null || !audio.codecs().startsWith("mp4a") || audio.indexEnd <= 0) {
+            return new ArrayList<>();
+        }
+        tracks.add(audio);
+        return tracks;
+    }
+
+    /** Master playlist: one variant per video track, all with the same audio. */
+    static String hlsMaster(StreamInfo info) {
+        List<StreamInfo.Format> tracks = hlsTracks(info);
+        StreamInfo.Format audio = tracks.remove(tracks.size() - 1);
+        StringBuilder m3u8 = new StringBuilder("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n");
+        m3u8.append("#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"")
+                .append(info.formats.indexOf(audio)).append(".m3u8\"\n");
+        for (StreamInfo.Format video : tracks) {
+            m3u8.append("#EXT-X-STREAM-INF:BANDWIDTH=").append(video.bitrate + audio.bitrate)
+                    .append(",CODECS=\"").append(video.codecs()).append(',').append(audio.codecs()).append('"')
+                    .append(",RESOLUTION=").append(video.width).append('x').append(video.height)
+                    .append(",AUDIO=\"audio\"\n")
+                    .append(info.formats.indexOf(video)).append(".m3u8\n");
+        }
+        return m3u8.toString();
     }
 
     /** DASH manifest with H.264/AAC (or VP9/Opus) tracks. Null if the video has no usable tracks. */
@@ -122,8 +202,12 @@ final class StreamProxy {
     }
 
     private static String formatPath(StreamInfo info, StreamInfo.Format format) {
+        return "/v/" + info.videoId + "/" + fileName(info, format);
+    }
+
+    private static String fileName(StreamInfo info, StreamInfo.Format format) {
         String ext = format.container().endsWith("webm") ? "webm" : (format.isAudioOnly() ? "m4a" : "mp4");
-        return "/v/" + info.videoId + "/" + info.formats.indexOf(format) + "." + ext;
+        return info.formats.indexOf(format) + "." + ext;
     }
 
     private static List<StreamInfo.Format> videoTracks(StreamInfo info, String container) {

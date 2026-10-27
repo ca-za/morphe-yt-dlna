@@ -95,6 +95,12 @@ final class NativeProxy {
 
     static native void nativeSetUserAgent(String userAgent);
 
+    /**
+     * HLS media playlist at {@code path} over the stream {@code uri} (relative to it), built
+     * from the segment index at {@code indexStart..indexEnd} of {@code url} when first requested.
+     */
+    static native void nativePutHls(String path, String uri, String url, long initEnd, long indexStart, long indexEnd);
+
     /** Name, id and user agent of the phone, sent with event subscriptions to renderers. */
     static native void nativeSetControlPoint(String name, String uuid, String userAgent);
 

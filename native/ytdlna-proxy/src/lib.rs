@@ -7,9 +7,11 @@
 //! Compared to a naive proxy this:
 //! - keeps upstream connections to YouTube alive and reuses them (no TLS handshake per segment),
 //! - supports keep-alive towards the renderer,
-//! - fetches large ranges in chunks with a read-ahead buffer and retries failed chunks.
+//! - fetches large ranges in chunks with a read-ahead buffer and retries failed chunks,
+//! - builds HLS playlists from the streams' segment index, for renderers without DASH.
 
 pub mod events;
+pub mod hls;
 pub mod http;
 pub mod log;
 pub mod registry;

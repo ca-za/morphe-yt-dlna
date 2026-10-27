@@ -164,7 +164,7 @@ abstract class Renderer {
     /** Media type of {@link #autoUri} addresses, as the streams will be served. */
     String autoMime() {
         if (audioOnly.getAsBoolean()) return "audio/mp4";
-        return device.supports("application/dash+xml") ? "application/dash+xml" : "video/mp4";
+        return StreamProxy.videoMime(device);
     }
 
     /** Makes {@link #autoUri} serve the video's media. */
