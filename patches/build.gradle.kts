@@ -31,8 +31,9 @@ val buildNativeProxy = tasks.register<Exec>("buildNativeProxy") {
     outputs.dir(outDir)
     commandLine(script.absolutePath, outDir.absolutePath)
 }
-sourceSets["main"].resources.srcDir(nativeOutput)
-tasks.named("processResources") { dependsOn(buildNativeProxy) }
+// Built by buildNativeProxy: every task reading the resources (also the publishing sourcesJar)
+// depends on it.
+sourceSets["main"].resources.srcDir(files(nativeOutput).builtBy(buildNativeProxy))
 
 dependencies {
     compileOnly(libs.gson)
