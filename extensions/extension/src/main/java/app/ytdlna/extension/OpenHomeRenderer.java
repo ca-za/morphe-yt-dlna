@@ -20,7 +20,11 @@ final class OpenHomeRenderer extends Renderer {
     /** Renderer playlist: video id <-> OpenHome track id. */
     private final Map<String, Integer> trackIdByVideo = new ConcurrentHashMap<>();
     private final Map<Integer, String> videoByTrackId = new ConcurrentHashMap<>();
+    /** Titles the renderer refused: not tried again, so filling the playlist ends. */
+    private final java.util.Set<String> refused = ConcurrentHashMap.newKeySet();
     private volatile int currentTrackId;
+    /** Track before our last SeekId: late events can still report it. */
+    private volatile int previousTrackId;
     private volatile boolean playlistStarted;
 
     OpenHomeRenderer(DlnaDevice device, String baseUrl, Listener listener, Handler main,
@@ -84,18 +88,27 @@ final class OpenHomeRenderer extends Renderer {
             return;
         }
         if (trackId == currentTrackId) return;
-        if (isEcho()) {
-            // Echo of our own SeekId or a late event from before it.
-            Log.d("Ignoring renderer track " + trackId + " right after our own change");
+        if (!videoByTrackId.containsKey(trackId)) {
+            // Not one of our entries, e.g. left over from an earlier session before ours is set up.
+            Log.d("Ignoring renderer track " + trackId + " (not in our playlist)");
+            return;
+        }
+        if (isEcho() && trackId == previousTrackId) {
+            // A late event from before our own SeekId. Any other track is a change on the TV.
+            Log.d("Ignoring renderer track " + trackId + " from before our own change");
             return;
         }
         currentTrackId = trackId;
         String videoId = videoByTrackId.get(trackId);
         Log.d("Renderer track " + trackId + " = " + videoId);
-        if (videoId != null) listener.onRendererTitle(videoId);
+        listener.onRendererTitle(videoId);
     }
 
     private void onWantsVideo(String videoId) {
+        if (!trackIdByVideo.containsKey(videoId)) {
+            Log.d("Ignoring request for " + videoId + " (not in our playlist)");
+            return;
+        }
         String current = videoByTrackId.get(currentTrackId);
         if (current != null && !current.equals(videoId)) {
             // Preloading the next track; the phone follows once the renderer switches to it.
@@ -117,8 +130,9 @@ final class OpenHomeRenderer extends Renderer {
                 ? trackIdByVideo.get(load.info.videoId)
                 : insert(currentTrackId, load.track, load.art);
         if (trackId != currentTrackId) {
-            OpenHome.seekId(device, trackId);
+            previousTrackId = currentTrackId;
             currentTrackId = trackId;
+            OpenHome.seekId(device, trackId);
         }
         OpenHome.play(device);
     }
@@ -131,47 +145,64 @@ final class OpenHomeRenderer extends Renderer {
         playlistStarted = false;
     }
 
-    /** Clears the renderer playlist and fills it with the app's queue. */
+    /**
+     * Clears the renderer playlist and starts it with the title to play. The rest of the queue
+     * follows through {@link #onQueue}, while the title already plays.
+     */
     private void startPlaylist(Load load) throws Exception {
         OpenHome.selectPlaylistSource(device);
         OpenHome.deleteAll(device);
         trackIdByVideo.clear();
         videoByTrackId.clear();
+        refused.clear();
         currentTrackId = 0;
         playlistStarted = true;
-        if (load.queue.isEmpty()) {
-            insert(0, load.track, load.art);
-        } else {
-            onQueue(load.queue);
-        }
-        Log.i("Renderer playlist has " + trackIdByVideo.size() + " tracks");
+        insert(0, load.track, load.art);
     }
+
+    /** Inserts per call; one insert takes up to half a second on some renderers. */
+    private static final int INSERTS_PER_CALL = 3;
 
     /** Adds queue entries that are not on the renderer yet, each after its predecessor. */
     @Override
-    void onQueue(List<LocalPlayer.QueueEntry> queue) {
-        if (!playlistStarted) return;
+    boolean onQueue(List<LocalPlayer.QueueEntry> queue) {
+        if (!playlistStarted) return false;
         List<Track> missing = new ArrayList<>();
         for (LocalPlayer.QueueEntry entry : queue) {
-            if (!trackIdByVideo.containsKey(entry.videoId)) missing.add(track(entry));
-        }
-        covers.prefetch(missing);
-        int after = 0;
-        for (LocalPlayer.QueueEntry entry : queue) {
-            Integer existing = trackIdByVideo.get(entry.videoId);
-            if (existing == null) {
-                StreamInfo captured = StreamCapture.get(entry.videoId);
-                if (captured != null) registerAuto(captured);
-                Track track = track(entry);
-                try {
-                    existing = insert(after, track, covers.forTrack(track, false));
-                } catch (Exception e) {
-                    Log.i("Adding " + entry.videoId + " to the renderer playlist failed: " + e.getMessage());
-                    continue;
-                }
+            if (!trackIdByVideo.containsKey(entry.videoId) && !refused.contains(entry.videoId)) {
+                missing.add(track(entry));
             }
-            after = existing;
         }
+        if (missing.isEmpty()) return false;
+        covers.prefetch(missing);
+        // The titles after the playing one first (the next one is needed soonest), then those before.
+        int playing = -1;
+        String playingVideo = videoByTrackId.get(currentTrackId);
+        for (int i = 0; i < queue.size(); i++) {
+            if (queue.get(i).videoId.equals(playingVideo)) playing = i;
+        }
+        List<Integer> order = new ArrayList<>();
+        for (int i = playing + 1; i < queue.size(); i++) order.add(i);
+        for (int i = 0; i < Math.max(playing, 0); i++) order.add(i);
+        int inserts = 0;
+        for (int i : order) {
+            LocalPlayer.QueueEntry entry = queue.get(i);
+            if (trackIdByVideo.containsKey(entry.videoId) || refused.contains(entry.videoId)) continue;
+            if (inserts++ == INSERTS_PER_CALL) return true;
+            // After its predecessor in the queue (inserted already by this order), or first.
+            Integer after = i == 0 ? Integer.valueOf(0) : trackIdByVideo.get(queue.get(i - 1).videoId);
+            StreamInfo captured = StreamCapture.get(entry.videoId);
+            if (captured != null) registerAuto(captured);
+            Track track = track(entry);
+            try {
+                insert(after == null ? 0 : after, track, covers.forTrack(track, false));
+            } catch (Exception e) {
+                Log.i("Adding " + entry.videoId + " to the renderer playlist failed: " + e.getMessage());
+                refused.add(entry.videoId);
+            }
+        }
+        Log.i("Renderer playlist has " + trackIdByVideo.size() + " tracks");
+        return false;
     }
 
     @Override

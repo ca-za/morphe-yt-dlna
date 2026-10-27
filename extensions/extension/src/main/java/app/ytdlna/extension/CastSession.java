@@ -32,8 +32,27 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private static final long PAUSE_DEBOUNCE_MS = 1200;
     /** Larger differences between phone and renderer position are corrected on the phone. */
     private static final long DRIFT_THRESHOLD_MS = 4000;
+    /** After a change on the TV, the phone finishing buffering does not resume the TV. */
+    private static final long RENDERER_PAUSE_WINS_MS = 10_000;
     private static final long SYNC_INTERVAL_MS = 10_000;
+    /** Without renderer events, polling is the only way to notice changes on the TV. */
     private static final long POLL_INTERVAL_MS = 2000;
+    /**
+     * With events, the state is only checked after our own commands: some renderers skip events
+     * after quick state changes (a TV pause right after our play). Checking only then, plus with
+     * the position sync, keeps the phone idle otherwise.
+     */
+    private static final long[] CONFIRM_POLL_MS = {1500, 4000};
+    /** Renderer events are not available (or lost): polling is the only source. */
+    private volatile boolean pollOnly;
+    /** The polling loop runs (main thread only). */
+    private boolean polling;
+    /** Newer commands replace the pending checks of older ones (main thread only). */
+    private int confirmGeneration;
+    /** When the last renderer state (event or poll) was handled. */
+    private volatile long lastStateAt;
+    /** When the renderer last changed its state on its own (its remote, not our command). */
+    private volatile long rendererChangedAt;
 
     private static CastSession active;
 
@@ -80,6 +99,16 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private float lastSpeed;
     private long lastQueueItemId = -1;
     private volatile long ignorePositionUntil;
+    /** Pauses before this are the player's reaction to our correction seek, not the user's. */
+    private volatile long seekPauseUntil;
+    /** A correction seek is settling (main thread only). */
+    private boolean correcting;
+    /** A player pausing because of a seek does so right away. */
+    private static final long SEEK_PAUSE_MS = 700;
+    /** When the phone last went to paused, 0 if it is not paused. */
+    private volatile long localPausedSince;
+    /** A phone pause longer than this without the renderer pausing was not made by the user. */
+    private static final long SELF_PAUSE_MS = PAUSE_DEBOUNCE_MS + 3000;
 
     private CastSession(Context context, DlnaDevice device, String streamHost) {
         this.context = context;
@@ -154,7 +183,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             Renderer r = renderer;
             if (r == null) return;
             r.unsubscribe();
-            if (stopRenderer) call("Stop", r::stop);
+            if (stopRenderer) call("Stop", r::stop, "STOPPED");
         });
         rendererThread.shutdown();
     }
@@ -181,7 +210,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             long position = state.getPosition();
             if (newState != PlaybackState.STATE_BUFFERING && Math.abs(position - expected) > SEEK_THRESHOLD_MS) {
                 Log.d("Local seek to " + position + " ms");
-                onRenderer("Seek", r -> r.seek(position, local.isPlaying()));
+                onRenderer("Seek", r -> r.seek(position, local.isPlaying()), "PLAYING", "PAUSED_PLAYBACK");
             }
         }
         if (newState != lastState) {
@@ -189,11 +218,15 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                     // Play pressed while paused: the player buffers first. Resume the renderer
                     // right away, so it does not depend on the phone's own (reduced) stream.
                     || (newState == PlaybackState.STATE_BUFFERING && lastState == PlaybackState.STATE_PAUSED);
-            if (resumeIntent && lastState != -1 && lastState != PlaybackState.STATE_PLAYING
-                    && !(lastState == PlaybackState.STATE_BUFFERING && newState == PlaybackState.STATE_PLAYING
-                    && "PLAYING".equals(rendererState))) {
-                onRenderer("Play", Renderer::resume);
-            } else if (newState == PlaybackState.STATE_PAUSED && now > ignorePositionUntil) {
+            // The end of buffering is no play by the user: not when the renderer plays anyway,
+            // and not right after a pause on the TV (it would undo that pause).
+            boolean bufferingEnded = lastState == PlaybackState.STATE_BUFFERING
+                    && newState == PlaybackState.STATE_PLAYING
+                    && ("PLAYING".equals(rendererState)
+                    || now - rendererChangedAt < RENDERER_PAUSE_WINS_MS);
+            if (resumeIntent && lastState != -1 && lastState != PlaybackState.STATE_PLAYING && !bufferingEnded) {
+                onRenderer("Play", Renderer::resume, "PLAYING");
+            } else if (newState == PlaybackState.STATE_PAUSED && !(correcting && now <= seekPauseUntil)) {
                 // Switching titles also reports "paused" for a moment: another queue item or
                 // the position jumping back to the start means a skip, not a pause.
                 long queueItem = state.getActiveQueueItemId();
@@ -201,14 +234,19 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                         || (state.getPosition() < 1500 && lastPosition > 5000);
                 String video = StreamCapture.currentVideoId();
                 if (!skipping) {
+                    // While a title loads or settles, pauses come and go: check once it settled.
+                    long delay = Math.max(PAUSE_DEBOUNCE_MS, ignorePositionUntil - now + PAUSE_DEBOUNCE_MS);
                     main.postDelayed(() -> {
                         PlaybackState current = local.state();
-                        if (stopped || current == null || current.getState() != PlaybackState.STATE_PAUSED
+                        // The TV changed its state since: its command is newer and wins.
+                        if (stopped || local.isReloading() || "PAUSED_PLAYBACK".equals(rendererState)
+                                || rendererChangedAt > now
+                                || current == null || current.getState() != PlaybackState.STATE_PAUSED
                                 || current.getActiveQueueItemId() != queueItem
                                 || video == null || !video.equals(StreamCapture.currentVideoId())) return;
                         Log.d("Local pause, mirrored to the renderer");
-                        onRenderer("Pause", Renderer::pause);
-                    }, PAUSE_DEBOUNCE_MS);
+                        onRenderer("Pause", Renderer::pause, "PAUSED_PLAYBACK");
+                    }, delay);
                 }
             }
         }
@@ -216,6 +254,14 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     }
 
     private void rememberState(PlaybackState state) {
+        if (state.getState() != lastState) {
+            Log.d("Phone state " + lastState + " -> " + state.getState() + " at " + state.getPosition() + " ms");
+        }
+        if (state.getState() == PlaybackState.STATE_PAUSED) {
+            if (lastState != PlaybackState.STATE_PAUSED) localPausedSince = SystemClock.elapsedRealtime();
+        } else {
+            localPausedSince = 0;
+        }
         lastState = state.getState();
         lastPosition = state.getPosition();
         lastUpdateTime = state.getLastPositionUpdateTime();
@@ -225,9 +271,11 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
 
     @Override
     public void onQueue(List<LocalPlayer.QueueEntry> queue) {
+        if (stopped) return;
         rendererThread.execute(() -> {
             Renderer r = renderer;
-            if (!stopped && r != null) r.onQueue(queue);
+            // A few entries at a time; commands queued meanwhile run in between.
+            if (!stopped && r != null && r.onQueue(queue)) onQueue(queue);
         });
     }
 
@@ -288,6 +336,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                     return;
                 }
                 StreamProxy.register(info);
+                // Read the queue first: its entry has the artist when the media session has none yet.
+                List<LocalPlayer.QueueEntry> queue = local.queue();
                 Track track = Track.from(info, local.metadata());
                 LocalPlayer.QueueEntry entry = local.entry(info.videoId);
                 if (track.artist.isEmpty() && entry != null) track.artist = entry.artist;
@@ -297,8 +347,11 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
 
                 ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
                 r.expectEcho(RENDERER_LOAD_SETTLE_MS);
-                r.load(new Renderer.Load(info, media, track, art, local.queue()));
+                r.load(new Renderer.Load(info, media, track, art, queue));
                 loadedVideoId = info.videoId;
+                // Checked once the load has settled (states before are ignored as its echo).
+                main.postDelayed(this::confirmState, RENDERER_LOAD_SETTLE_MS);
+                onQueue(queue);
                 CastUi.onTitle(track.artist.isEmpty() ? track.title : track.title + " · " + track.artist,
                         track.artUrl);
 
@@ -329,7 +382,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         }
         if (local.stateCode() == PlaybackState.STATE_PAUSED) {
             Log.d("Phone paused after loading " + videoId + ", pausing the renderer");
-            onRenderer("Pause", Renderer::pause);
+            onRenderer("Pause", Renderer::pause, "PAUSED_PLAYBACK");
         }
     }
 
@@ -344,53 +397,100 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             thread.start();
         } else {
             Log.i("Renderer events not available, polling the renderer");
-            main.postDelayed(this::poll, POLL_INTERVAL_MS);
+            pollOnly = true;
+            startPolling();
         }
         main.postDelayed(this::syncPosition, SYNC_INTERVAL_MS);
     }
 
     private void eventLoop() {
         while (!stopped) {
-            String event = NativeProxy.nativeWaitEvent(1000);
-            if (event == null) continue;
-            String[] parts = event.split("\n", 3);
-            Renderer r = renderer;
-            if (parts.length == 3 && r != null) r.handleEvent(parts[0], parts[1], parts[2]);
+            try {
+                String event = NativeProxy.nativeWaitEvent(1000);
+                if (event == null) continue;
+                String[] parts = event.split("\n", 3);
+                Renderer r = renderer;
+                if (parts.length < 3 || r == null) continue;
+                boolean handled = r.handleEvent(parts[0], parts[1], parts[2]);
+                if (!parts[1].equals("IdArray")) {
+                    Log.d("Event " + parts[1] + "=" + parts[2] + (handled ? "" : " (not for this session)"));
+                }
+            } catch (Throwable t) {
+                // Keep listening; one bad event must not end the renderer -> phone direction.
+                Log.e("Handling a renderer event failed", t);
+            }
         }
     }
 
     @Override
     public void onEventsLost() {
         Log.i("Renderer event subscription lost, polling instead");
-        main.postDelayed(this::poll, POLL_INTERVAL_MS);
+        pollOnly = true;
+        main.post(this::startPolling);
     }
 
-    private void poll() {
+    private void startPolling() {
+        if (polling || stopped) return;
+        polling = true;
+        main.postDelayed(this::pollLoop, POLL_INTERVAL_MS);
+    }
+
+    private void pollLoop() {
         if (stopped) return;
+        pollState();
+        main.postDelayed(this::pollLoop, POLL_INTERVAL_MS);
+    }
+
+    /** After a command of ours: checks that the renderer's events did not miss a change. */
+    private void confirmState() {
+        if (pollOnly || stopped) return;
+        int generation = ++confirmGeneration;
+        for (long delay : CONFIRM_POLL_MS) {
+            main.postDelayed(() -> {
+                if (generation == confirmGeneration) pollState();
+            }, delay);
+        }
+    }
+
+    /** Asks the renderer for its transport state once. */
+    private void pollState() {
+        if (stopped) return;
+        long started = SystemClock.elapsedRealtime();
         rendererThread.execute(() -> {
             try {
                 String state = renderer.pollState();
-                if (!state.isEmpty()) main.post(() -> onTransportState(state));
+                main.post(() -> {
+                    // An event in the meantime is newer than the polled state.
+                    if (state.isEmpty() || lastStateAt > started) return;
+                    if (!pollOnly && !state.equals(rendererState)) {
+                        Log.d("Polled state " + state + " differs from the events (" + rendererState + ")");
+                    }
+                    onTransportState(state);
+                });
             } catch (Exception e) {
                 Log.d("Polling renderer failed: " + e.getMessage());
             }
         });
-        main.postDelayed(this::poll, POLL_INTERVAL_MS);
     }
 
     @Override
     public void onTransportState(String value) {
+        lastStateAt = SystemClock.elapsedRealtime();
         if (stopped || value.equals(rendererState)) return;
         String previous = rendererState;
         rendererState = value;
         Log.d("Renderer " + previous + " -> " + value);
         Renderer r = renderer;
-        if (r == null || r.isEcho()) return;
+        // Before our first title, states are the renderer's initial state (sent when subscribing).
+        if (r == null || r.isEcho(value) || loadedVideoId == null) return;
+        rendererChangedAt = SystemClock.elapsedRealtime();
 
         int localState = local.stateCode();
         switch (value) {
             case "PAUSED_PLAYBACK":
-                if (localState == PlaybackState.STATE_PLAYING) {
+                // Also while the phone buffers: it would play on afterwards.
+                if (localState == PlaybackState.STATE_PLAYING || localState == PlaybackState.STATE_BUFFERING
+                        || localState == PlaybackState.STATE_CONNECTING) {
                     Log.i("Paused on the renderer");
                     local.pause();
                 }
@@ -434,10 +534,23 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         if (local.skipTo(videoId)) Log.i("Phone follows the renderer to " + videoId);
     }
 
-    /** Keeps the phone at the renderer's position, since the renderer is what is heard. */
+    /**
+     * Keeps the phone at the renderer's position and play state, since the renderer is what is
+     * heard: the app can pause on its own (for example after a seek), which no user did.
+     */
     private void syncPosition() {
         if (stopped) return;
         main.postDelayed(this::syncPosition, SYNC_INTERVAL_MS);
+        // A rare check next to the events, for changes a renderer did not report.
+        if (!pollOnly) pollState();
+        long pausedSince = localPausedSince;
+        if ("PLAYING".equals(rendererState) && local.stateCode() == PlaybackState.STATE_PAUSED
+                && pausedSince > 0 && SystemClock.elapsedRealtime() - pausedSince > SELF_PAUSE_MS
+                && SystemClock.elapsedRealtime() > ignorePositionUntil && !local.isReloading()) {
+            // A pause by the user would have paused the renderer within the debounce time.
+            Log.i("Phone paused on its own while the renderer plays, resuming it");
+            local.play();
+        }
         if (!"PLAYING".equals(rendererState) && !rendererState.isEmpty()) return;
         rendererThread.execute(() -> {
             try {
@@ -448,8 +561,23 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 if (Math.abs(remote - phone) > DRIFT_THRESHOLD_MS) {
                     Log.i("Correcting phone position " + phone + " -> " + remote + " ms");
                     main.post(() -> {
-                        ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
+                        // Paused in the meantime: that pause wins, it is mirrored to the renderer.
+                        if (stopped || !local.isPlaying()) return;
+                        long seekAt = SystemClock.elapsedRealtime();
+                        ignorePositionUntil = seekAt + LOAD_SETTLE_MS;
+                        seekPauseUntil = seekAt + SEEK_PAUSE_MS;
+                        correcting = true;
                         local.seekTo(remote);
+                        // Some players pause right after a seek; keep it playing like the renderer.
+                        // A later pause is the user's and stays.
+                        main.postDelayed(() -> {
+                            correcting = false;
+                            long pauseStart = localPausedSince;
+                            if (!stopped && local.stateCode() == PlaybackState.STATE_PAUSED
+                                    && pauseStart > 0 && pauseStart <= seekAt + SEEK_PAUSE_MS) {
+                                local.play();
+                            }
+                        }, 1500);
                     });
                 }
             } catch (Exception e) {
@@ -460,9 +588,22 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
 
     // endregion
 
+    /** State for the regression tests. */
+    org.json.JSONObject status() throws org.json.JSONException {
+        Renderer r = renderer;
+        return new org.json.JSONObject()
+                .put("device", device.friendlyName)
+                .put("renderer", r == null ? "" : r.getClass().getSimpleName())
+                .put("loadedVideoId", loadedVideoId == null ? "" : loadedVideoId)
+                .put("rendererState", rendererState)
+                .put("audioOnly", audioOnly())
+                .put("reloading", local.isReloading());
+    }
+
     /** Changes the renderer volume by {@code delta} and reports the new value. */
     void adjustVolume(int delta, IntConsumer onVolume) {
-        onRenderer("Volume", r -> {
+        // Volume does not change the transport state: no echo to expect.
+        onRenderer("Volume", null, r -> {
             if (rendererVolume < 0) rendererVolume = r.volume();
             if (rendererVolume < 0) return;
             rendererVolume = Math.max(0, Math.min(100, rendererVolume + delta));
@@ -475,12 +616,19 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         void run(Renderer renderer) throws Exception;
     }
 
-    /** Runs a command on the renderer thread; its events are treated as echo. */
-    private void onRenderer(String action, RendererCall call) {
+    /**
+     * Runs a command on the renderer thread. Renderer events that report {@code echoStates}
+     * shortly after are treated as its echo.
+     */
+    private void onRenderer(String action, RendererCall call, String... echoStates) {
+        onRenderer(action, echoStates, call);
+    }
+
+    private void onRenderer(String action, String[] echoStates, RendererCall call) {
         if (stopped) return;
         rendererThread.execute(() -> {
             Renderer r = renderer;
-            if (r != null) call(action, () -> call.run(r));
+            if (r != null) call(action, () -> call.run(r), echoStates);
         });
     }
 
@@ -488,14 +636,16 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         void run() throws Exception;
     }
 
-    private void call(String action, Call call) {
+    private void call(String action, Call call, String... echoStates) {
         Renderer r = renderer;
-        if (r != null) r.expectEcho();
+        if (r != null && echoStates != null) r.expectEcho(echoStates);
         try {
             call.run();
         } catch (Exception e) {
             Log.i(action + " on renderer failed: " + e.getMessage());
         }
+        // Transport commands (not volume): check the result in case the renderer skips its event.
+        if (echoStates != null) main.post(this::confirmState);
     }
 
     private void toast(String message) {

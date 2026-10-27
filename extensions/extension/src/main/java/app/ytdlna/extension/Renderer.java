@@ -53,6 +53,8 @@ abstract class Renderer {
     /** YouTube Music in song mode. Can change while casting. */
     final BooleanSupplier audioOnly;
     private volatile long ignoreUntil;
+    /** States our last command leads to; null: any state (loading a title). */
+    private volatile java.util.Set<String> expectedStates;
 
     Renderer(DlnaDevice device, String baseUrl, Listener listener, Handler main, BooleanSupplier audioOnly) {
         this.device = device;
@@ -70,17 +72,30 @@ abstract class Renderer {
                 : new AvTransportRenderer(device, baseUrl, listener, main, audioOnly);
     }
 
-    /** Events that follow within {@code ms} are treated as the echo of our own command. */
-    void expectEcho(long ms) {
+    /**
+     * Within {@code ms}, transport states in {@code states} (and TRANSITIONING on the way there)
+     * are the echo of our own command; other states are real changes on the TV.
+     * Without states, every event is treated as echo (loading a title).
+     */
+    void expectEcho(long ms, String... states) {
+        expectedStates = states.length == 0 ? null : new java.util.HashSet<>(java.util.Arrays.asList(states));
         ignoreUntil = SystemClock.elapsedRealtime() + ms;
     }
 
-    void expectEcho() {
-        expectEcho(ECHO_MS);
+    void expectEcho(String... states) {
+        expectEcho(ECHO_MS, states);
     }
 
+    /** A track change within the echo time (any kind). */
     boolean isEcho() {
         return SystemClock.elapsedRealtime() < ignoreUntil;
+    }
+
+    /** {@code state} is the echo of our last command. */
+    boolean isEcho(String state) {
+        if (!isEcho()) return false;
+        java.util.Set<String> states = expectedStates;
+        return states == null || states.contains(state) || state.equals("TRANSITIONING");
     }
 
     // region Events
@@ -122,8 +137,14 @@ abstract class Renderer {
         DlnaController.setVolume(device, volume);
     }
 
-    /** The app's queue changed. */
-    void onQueue(List<LocalPlayer.QueueEntry> queue) {
+    /**
+     * The app's queue changed. Renderers with a playlist add a few entries per call, so other
+     * commands are not held up.
+     *
+     * @return true if entries are left: call again.
+     */
+    boolean onQueue(List<LocalPlayer.QueueEntry> queue) {
+        return false;
     }
 
     /** The app loaded streams of a title that is not playing (usually preloading the next one). */
