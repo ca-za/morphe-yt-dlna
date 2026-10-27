@@ -95,8 +95,6 @@ final class NativeProxy {
 
     static native void nativeSetUserAgent(String userAgent);
 
-    static native void nativeSetDebug(boolean enabled);
-
     static native void nativePutText(String path, String mimeType, String body);
 
     static native void nativePutStream(String path, String mimeType, String url, long contentLength);

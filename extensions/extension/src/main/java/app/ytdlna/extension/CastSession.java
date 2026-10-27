@@ -3,7 +3,6 @@ package app.ytdlna.extension;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.content.Context;
-import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSession;
@@ -79,7 +78,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
     private volatile boolean stopped;
 
     private MediaController controller;
-    private int savedVolume = -1;
     private int attachAttempts;
 
     // Last local playback state, for detecting seeks and state changes.
@@ -114,15 +112,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         }
 
         @Override
-        public void onMetadataChanged(MediaMetadata metadata) {
-            if (metadata != null) {
-                Log.d("Session metadata: " + metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
-                        + " video=" + metadata.getLong("com.google.android.youtube.MEDIA_METADATA_VIDEO_WIDTH_PX")
-                        + "x" + metadata.getLong("com.google.android.youtube.MEDIA_METADATA_VIDEO_HEIGHT_PX"));
-            }
-        }
-
-        @Override
         public void onQueueChanged(List<MediaSession.QueueItem> queue) {
             if (openHome) {
                 List<QueueEntry> entries = readQueue(queue);
@@ -151,7 +140,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
 
     private void begin(StreamInfo first) {
         Log.i("Cast session started on " + device);
-        restoreVolumeAfterCrash(context);
         StreamCapture.addListener(this);
         if (musicApp) MusicMode.setListener(this);
         if (!musicApp) {
@@ -163,19 +151,13 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         }
         // Nothing plays on the phone while casting.
         CastAudio.setMuted(true);
-        main.postDelayed(() -> {
-            if (!stopped && !CastAudio.hasTracks()) {
-                Log.i("App audio output unknown, muting the media volume instead");
-                muteLocal();
-            }
-        }, 3000);
         renderer.execute(() -> {
             try {
                 DlnaController.loadSinkProtocols(device);
                 int port = StreamProxy.start(context);
                 String host = streamHost.isEmpty() ? StreamProxy.localAddressFor(device) : streamHost;
                 baseUrl = "http://" + host + ":" + port;
-                openHome = device.hasOpenHomePlaylist() && StreamProxy.isNative();
+                openHome = device.hasOpenHomePlaylist();
                 Log.i("Using " + (openHome ? "OpenHome playlist" : "AVTransport") + " on " + device);
                 startRendererEvents();
             } catch (Exception e) {
@@ -213,7 +195,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
             main.postDelayed(() -> {
                 if (CastSession.active() == null) CastAudio.setMuted(false);
             }, reloading ? 2500 : 0);
-            restoreLocalVolume();
         });
         if (stopRenderer) {
             renderer.execute(() -> {
@@ -245,7 +226,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         controller.registerCallback(callback, main);
         // The running title still plays with video locally: reload it, now audio only.
         reloadLocal(controller);
-        logSession();
         if (openHome && loadedVideoId != null) {
             List<QueueEntry> entries = readQueue(controller.getQueue());
             renderer.execute(() -> syncPlaylist(entries));
@@ -265,68 +245,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
             Log.e("Could not read media notification", e);
         }
         return null;
-    }
-
-    private void logSession() {
-        MediaMetadata metadata = controller.getMetadata();
-        if (metadata != null) {
-            StringBuilder keys = new StringBuilder();
-            for (String key : metadata.keySet()) {
-                Object value = key.contains("BITMAP") || key.contains("ART") && !key.endsWith("URI")
-                        ? "<bitmap>" : metadata.getText(key);
-                keys.append("\n  ").append(key).append(" = ").append(value);
-            }
-            Log.d("Session metadata:" + keys);
-        }
-        List<MediaSession.QueueItem> queue = controller.getQueue();
-        if (queue != null) {
-            Log.d("Session queue: " + queue.size() + " items");
-            for (int i = 0; i < Math.min(queue.size(), 5); i++) {
-                MediaSession.QueueItem item = queue.get(i);
-                Log.d("  #" + item.getQueueId() + " " + item.getDescription().getMediaId()
-                        + " " + item.getDescription().getTitle() + " / " + item.getDescription().getSubtitle()
-                        + " icon=" + item.getDescription().getIconUri());
-            }
-        }
-    }
-
-    private static final String PREF_SAVED_VOLUME = "saved_media_volume";
-
-    /**
-     * Fallback when the app's audio output is not known: mutes the media volume. The previous
-     * volume is also saved, so it comes back even if the app is killed while casting.
-     */
-    private void muteLocal() {
-        AudioManager audio = context.getSystemService(AudioManager.class);
-        if (audio == null || savedVolume >= 0) return;
-        savedVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
-        prefs(context).edit().putInt(PREF_SAVED_VOLUME, savedVolume).apply();
-        audio.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0);
-    }
-
-    private void restoreLocalVolume() {
-        AudioManager audio = context.getSystemService(AudioManager.class);
-        if (audio == null || savedVolume < 0) return;
-        audio.setStreamVolume(AudioManager.STREAM_MUSIC, savedVolume, 0);
-        savedVolume = -1;
-        prefs(context).edit().remove(PREF_SAVED_VOLUME).apply();
-    }
-
-    /** Restores a media volume a previous cast muted and could not restore (app was killed). */
-    static void restoreVolumeAfterCrash(Context context) {
-        android.content.SharedPreferences prefs = prefs(context);
-        int saved = prefs.getInt(PREF_SAVED_VOLUME, -1);
-        if (saved < 0) return;
-        AudioManager audio = context.getSystemService(AudioManager.class);
-        if (audio != null && audio.getStreamVolume(AudioManager.STREAM_MUSIC) == 0) {
-            audio.setStreamVolume(AudioManager.STREAM_MUSIC, saved, 0);
-            Log.i("Restored the media volume of an interrupted cast");
-        }
-        prefs.edit().remove(PREF_SAVED_VOLUME).apply();
-    }
-
-    private static android.content.SharedPreferences prefs(Context context) {
-        return context.getApplicationContext().getSharedPreferences("ytdlna", Context.MODE_PRIVATE);
     }
 
     /** Current local position in ms, extrapolated while playing. */
@@ -414,7 +332,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
             if (device.playlistEventUrl != null) {
                 playlistToken = NativeProxy.nativeSubscribe(device.playlistEventUrl, baseUrl);
             }
-        } else if (StreamProxy.isNative() && device.avTransportEventUrl != null) {
+        } else if (device.avTransportEventUrl != null) {
             avTransportToken = NativeProxy.nativeSubscribe(device.avTransportEventUrl, baseUrl);
         }
         if (avTransportToken != null || playlistToken != null) {
@@ -852,7 +770,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
 
     /** Makes {@code /v/<videoId>/auto} serve the video's media, as used by playlist entries. */
     private void registerAuto(StreamInfo info) {
-        if (!StreamProxy.isNative() || baseUrl == null) return;
+        if (baseUrl == null) return;
         StreamProxy.Media media = StreamProxy.choose(info, device, audioOnly());
         if (media == null) return;
         StreamProxy.register(info);
@@ -924,7 +842,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
                 return cover;
             }
         }
-        return StreamProxy.registerArt(track, baseUrl);
+        return track.artUrl.isEmpty() ? null : track.artUrl;
     }
 
     // endregion

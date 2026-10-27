@@ -44,11 +44,8 @@ private const val MDX_MEDIA_ROUTE_BUTTON_CLASS =
     "Lcom/google/android/libraries/youtube/mdx/mediaroute/MdxMediaRouteButton;"
 private const val SHARE_ACTIVITY = "app.ytdlna.extension.DlnaShareActivity"
 
-private val PERMISSIONS = listOf(
-    "android.permission.CHANGE_WIFI_MULTICAST_STATE",
-    "android.permission.ACCESS_WIFI_STATE",
-    "android.permission.INTERNET",
-)
+/** SSDP discovery needs a multicast lock; network and Wi-Fi state access the apps already have. */
+private val PERMISSIONS = listOf("android.permission.CHANGE_WIFI_MULTICAST_STATE")
 
 private val NATIVE_ABIS = setOf("arm64-v8a", "armeabi-v7a", "x86_64")
 

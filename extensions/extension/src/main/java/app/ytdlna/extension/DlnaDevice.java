@@ -30,7 +30,6 @@ final class DlnaDevice {
     String playlistEventUrl;
     String productType;
     String productControlUrl;
-    String timeEventUrl;
     String timeType;
     String timeControlUrl;
 
@@ -156,7 +155,6 @@ final class DlnaDevice {
                                         && timeControlUrl == null) {
                                     timeType = serviceType;
                                     timeControlUrl = absolute;
-                                    timeEventUrl = absoluteEvent;
                                 } else if (serviceType.startsWith(CONNECTION_MANAGER)
                                         && connectionManagerControlUrl == null) {
                                     connectionManagerType = serviceType;

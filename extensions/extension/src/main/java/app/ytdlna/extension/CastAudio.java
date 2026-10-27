@@ -45,11 +45,6 @@ public final class CastAudio {
         return muted ? track.setStereoVolume(0f, 0f) : track.setStereoVolume(left, right);
     }
 
-    /** True once the app played audio through a track this class knows. */
-    static boolean hasTracks() {
-        return !volumes.isEmpty();
-    }
-
     static void setMuted(boolean mute) {
         if (muted == mute) return;
         muted = mute;

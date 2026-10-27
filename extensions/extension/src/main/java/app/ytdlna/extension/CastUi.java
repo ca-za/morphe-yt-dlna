@@ -10,22 +10,14 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.os.SystemClock;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.view.Gravity;
 import android.view.KeyEvent;
-import android.view.View;
-import android.view.ViewGroup;
 import android.view.Window;
-import android.view.WindowInsets;
-import android.widget.FrameLayout;
-import android.widget.TextView;
+import android.widget.Toast;
 
-import java.lang.ref.WeakReference;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 
@@ -33,15 +25,12 @@ import java.lang.reflect.Proxy;
  * Cast UI while a DLNA cast is active:
  * <ul>
  *   <li>a notification "Playing on ..." with a stop action, like YouTube's cast notification,</li>
- *   <li>a short "Playing on ..." bar in the app (tap: device picker) when the cast starts,
- *       the title changes or the volume is changed. It hides itself so it covers nothing,</li>
+ *   <li>the video area covered by the cast screen ({@link VideoCover}),</li>
  *   <li>the volume keys controlling the TV.</li>
  * </ul>
  */
 final class CastUi implements Application.ActivityLifecycleCallbacks {
-    private static final String BANNER_TAG = "ytdlna-cast-banner";
     private static final int VOLUME_STEP = 5;
-    private static final long BANNER_DURATION_MS = 5000;
     private static final String CHANNEL_ID = "ytdlna_cast";
     private static final int NOTIFICATION_ID = 0x7d1a;
     private static final String ACTION_STOP = "app.ytdlna.action.STOP_CAST";
@@ -49,16 +38,9 @@ final class CastUi implements Application.ActivityLifecycleCallbacks {
     private static CastUi instance;
     private static final Handler main = new Handler(Looper.getMainLooper());
 
-    private WeakReference<Activity> current = new WeakReference<>(null);
     private Context appContext;
-    private long bannerVisibleUntil;
     private String nowPlaying = "";
-    private final Runnable hideBanner = this::refresh;
-    private String volumeText = "";
-    private final Runnable clearVolumeText = () -> {
-        volumeText = "";
-        refresh();
-    };
+    private Toast volumeToast;
 
     private CastUi() {
     }
@@ -74,10 +56,9 @@ final class CastUi implements Application.ActivityLifecycleCallbacks {
         instance.attach(activity);
     }
 
-    /** Updates the bar and notification after a cast started or stopped. */
+    /** Updates the notification and cast screen after a cast started or stopped. */
     static void update() {
         if (instance != null) main.post(() -> {
-            instance.showBannerBriefly();
             instance.updateNotification();
             VideoCover.update(null, null);
         });
@@ -88,73 +69,13 @@ final class CastUi implements Application.ActivityLifecycleCallbacks {
         if (instance != null) main.post(() -> {
             VideoCover.update(title, artUrl);
             instance.nowPlaying = title == null ? "" : title;
-            instance.showBannerBriefly();
             instance.updateNotification();
         });
     }
 
-    private void showBannerBriefly() {
-        bannerVisibleUntil = SystemClock.elapsedRealtime() + BANNER_DURATION_MS;
-        refresh();
-        main.removeCallbacks(hideBanner);
-        main.postDelayed(hideBanner, BANNER_DURATION_MS + 50);
-    }
-
     private void attach(Activity activity) {
-        current = new WeakReference<>(activity);
         wrapWindowCallback(activity);
         VideoCover.attach(activity);
-        refresh();
-    }
-
-    private void refresh() {
-        Activity activity = current.get();
-        if (activity == null || activity.isFinishing()) return;
-        ViewGroup decor = (ViewGroup) activity.getWindow().getDecorView();
-        View existing = decor.findViewWithTag(BANNER_TAG);
-        CastSession session = CastSession.active();
-        if (session == null || SystemClock.elapsedRealtime() > bannerVisibleUntil) {
-            if (existing != null) decor.removeView(existing);
-            return;
-        }
-        TextView banner = existing instanceof TextView ? (TextView) existing : createBanner(activity, decor);
-        String text = "▶  " + DlnaCast.t("Wird auf ", "Playing on ") + session.device.friendlyName
-                + DlnaCast.t(" abgespielt", "");
-        if (!volumeText.isEmpty()) text += "  ·  " + volumeText;
-        banner.setText(text);
-    }
-
-    private TextView createBanner(Activity activity, ViewGroup decor) {
-        float density = activity.getResources().getDisplayMetrics().density;
-        TextView banner = new TextView(activity);
-        banner.setTag(BANNER_TAG);
-        banner.setTextColor(0xFFFFFFFF);
-        banner.setTextSize(13);
-        banner.setSingleLine(true);
-        int horizontal = (int) (14 * density);
-        int vertical = (int) (6 * density);
-        banner.setPadding(horizontal, vertical, horizontal, vertical);
-        GradientDrawable background = new GradientDrawable();
-        background.setColor(0xE6202124);
-        background.setCornerRadius(16 * density);
-        banner.setBackground(background);
-        banner.setElevation(8 * density);
-        banner.setOnClickListener(v -> DlnaCast.showPicker(activity, null, StreamCapture.current(), null));
-
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        params.topMargin = statusBarHeight(decor, density) + (int) (4 * density);
-        decor.addView(banner, params);
-        return banner;
-    }
-
-    private static int statusBarHeight(View decor, float density) {
-        WindowInsets insets = decor.getRootWindowInsets();
-        if (insets != null && Build.VERSION.SDK_INT >= 30) {
-            return insets.getInsets(WindowInsets.Type.statusBars()).top;
-        }
-        return (int) (24 * density);
     }
 
     // region Notification
@@ -245,10 +166,11 @@ final class CastUi implements Application.ActivityLifecycleCallbacks {
         if (session == null) return false;
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             session.adjustVolume(code == KeyEvent.KEYCODE_VOLUME_UP ? VOLUME_STEP : -VOLUME_STEP, volume -> main.post(() -> {
-                volumeText = DlnaCast.t("Lautstärke ", "Volume ") + volume;
-                showBannerBriefly();
-                main.removeCallbacks(clearVolumeText);
-                main.postDelayed(clearVolumeText, 2500);
+                // One toast, updated while the key is pressed repeatedly.
+                if (volumeToast != null) volumeToast.cancel();
+                volumeToast = Toast.makeText(appContext, session.device.friendlyName + ": "
+                        + DlnaCast.t("Lautstärke ", "Volume ") + volume, Toast.LENGTH_SHORT);
+                volumeToast.show();
             }));
         }
         return true;

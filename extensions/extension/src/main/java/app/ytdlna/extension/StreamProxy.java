@@ -1,38 +1,28 @@
 package app.ytdlna.extension;
 
-import java.io.BufferedInputStream;
+import android.content.Context;
+
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
+import java.net.DatagramSocket;
 import java.net.InetAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
- * HTTP server on the phone that the renderer streams from.
+ * What the renderer streams, served by the native (Rust) proxy on the phone.
  * <p>
- * Routes:
+ * Paths:
  * <ul>
  *   <li>{@code /v/<videoId>/manifest.mpd} - DASH manifest with separate video and audio tracks.</li>
  *   <li>{@code /v/<videoId>/<formatIndex>.<ext>} - one format, proxied with Range support.</li>
+ *   <li>{@code /v/<videoId>/auto} - the media chosen for the renderer (OpenHome playlist entries).</li>
  * </ul>
  * The YouTube stream URLs are bound to the phone, so the renderer can not use them directly.
  */
 final class StreamProxy {
     private static final int PREFERRED_PORT = 8720;
     private static final int MAX_VIDEO_HEIGHT = 1080;
-    private static final String DLNA_FEATURES =
-            "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
 
     /** What to send to the renderer. */
     static final class Media {
@@ -49,64 +39,26 @@ final class StreamProxy {
         }
     }
 
-    private static StreamProxy instance;
-
     /** User agent for upstream requests, set from the app's package info. */
-    static volatile String userAgent = "com.google.android.youtube/21.42.241 (Linux; U; Android 15) gzip";
+    static volatile String userAgent = "";
 
-    private final ServerSocket server;
-    private final ExecutorService pool = Executors.newCachedThreadPool();
+    private static int port;
 
-    private StreamProxy(ServerSocket server) {
-        this.server = server;
-        Thread acceptThread = new Thread(this::acceptLoop, "YtDlna-proxy");
-        acceptThread.setDaemon(true);
-        acceptThread.start();
+    private StreamProxy() {
     }
 
-    /** Port of the running native proxy, or 0 if the Java proxy is used. */
-    private static int nativePort;
-
-    /**
-     * Starts the proxy if needed and returns its port. Uses the Rust proxy when its
-     * library is available, otherwise the Java implementation in this class.
-     */
-    static synchronized int start(android.content.Context context) throws IOException {
-        if (nativePort > 0) return nativePort;
-        if (instance == null && NativeProxy.load(context)) {
-            int port = NativeProxy.nativeStart(PREFERRED_PORT);
-            if (port > 0) {
-                nativePort = port;
-                Log.i("Using native stream proxy on port " + port);
-                return port;
-            }
-        }
-        return get().port();
+    /** Starts the proxy if needed and returns its port. */
+    static synchronized int start(Context context) throws IOException {
+        if (port > 0) return port;
+        if (!NativeProxy.load(context)) throw new IOException("Stream proxy not available on this device");
+        int started = NativeProxy.nativeStart(PREFERRED_PORT);
+        if (started <= 0) throw new IOException("Stream proxy could not start");
+        port = started;
+        return port;
     }
 
-    /** Serves {@code media} of a video also under {@code path} (native proxy only). */
-    static void alias(StreamInfo info, Media media, String path) {
-        if (nativePort <= 0) return;
-        if (media.mimeType.equals("application/dash+xml")) {
-            NativeProxy.nativePutText(path, media.mimeType, manifest(info));
-            return;
-        }
-        String file = media.path.substring(media.path.lastIndexOf('/') + 1);
-        int index = Integer.parseInt(file.substring(0, file.indexOf('.')));
-        StreamInfo.Format format = info.formats.get(index);
-        NativeProxy.nativePutStream(path, format.container(), format.url, format.contentLength);
-    }
-
-    static boolean isNative() {
-        return nativePort > 0;
-    }
-
-    /**
-     * Makes the streams of a video available. The Java proxy reads them from
-     * {@link StreamCapture} on demand, the native proxy needs them registered.
-     */
+    /** Makes the streams of a video available to the renderer. */
     static void register(StreamInfo info) {
-        if (nativePort <= 0) return;
         NativeProxy.nativeSetUserAgent(userAgent);
         String prefix = "/v/" + info.videoId + "/";
         NativeProxy.nativeRemovePrefix(prefix);
@@ -119,22 +71,15 @@ final class StreamProxy {
         }
     }
 
-    private static synchronized StreamProxy get() throws IOException {
-        if (instance == null) {
-            ServerSocket socket;
-            try {
-                socket = new ServerSocket(PREFERRED_PORT);
-            } catch (IOException e) {
-                socket = new ServerSocket(0);
-            }
-            instance = new StreamProxy(socket);
-            Log.i("Stream proxy listening on port " + socket.getLocalPort());
+    /** Serves {@code media} of a video also under {@code path}. */
+    static void alias(StreamInfo info, Media media, String path) {
+        if (media.mimeType.equals("application/dash+xml")) {
+            NativeProxy.nativePutText(path, media.mimeType, manifest(info));
+            return;
         }
-        return instance;
-    }
-
-    int port() {
-        return server.getLocalPort();
+        String file = media.path.substring(media.path.lastIndexOf('/') + 1);
+        StreamInfo.Format format = info.formats.get(Integer.parseInt(file.substring(0, file.indexOf('.'))));
+        NativeProxy.nativePutStream(path, format.container(), format.url, format.contentLength);
     }
 
     // region Media selection
@@ -144,18 +89,6 @@ final class StreamProxy {
         if (audioOnly) return audio(info);
         Media media = device.supports("application/dash+xml") ? dash(info) : null;
         return media != null ? media : muxed(info);
-    }
-
-    /**
-     * Makes the cover available to the renderer. Through the native proxy as plain http,
-     * since not every renderer can load https images, otherwise the original https URL.
-     */
-    static String registerArt(Track track, String baseUrl) {
-        if (track.artUrl.isEmpty()) return null;
-        if (nativePort <= 0) return track.artUrl;
-        String path = "/art/" + track.videoId + ".jpg";
-        NativeProxy.nativePutStream(path, "image/jpeg", track.artUrl, 0);
-        return baseUrl + path;
     }
 
     /** DASH manifest with H.264/AAC (or VP9/Opus) tracks. Null if the video has no usable tracks. */
@@ -267,154 +200,9 @@ final class StreamProxy {
 
     // endregion
 
-    // region Server
-
-    private void acceptLoop() {
-        while (!server.isClosed()) {
-            try {
-                Socket client = server.accept();
-                pool.execute(() -> handle(client));
-            } catch (IOException e) {
-                Log.e("Proxy accept failed", e);
-            }
-        }
-    }
-
-    private void handle(Socket client) {
-        try (Socket socket = client) {
-            socket.setSoTimeout(30_000);
-            InputStream in = new BufferedInputStream(socket.getInputStream());
-            OutputStream out = socket.getOutputStream();
-
-            String requestLine = LanHttp.readLine(in);
-            Map<String, String> headers = LanHttp.readHeaders(in);
-            String[] parts = requestLine.split(" ");
-            if (parts.length < 2) return;
-            String method = parts[0].toUpperCase(Locale.ROOT);
-            String path = parts[1];
-            int query = path.indexOf('?');
-            if (query >= 0) path = path.substring(0, query);
-            Log.d("Proxy " + socket.getInetAddress().getHostAddress() + ": " + method + " " + path
-                    + (headers.containsKey("range") ? " range=" + headers.get("range") : ""));
-
-            String[] segments = path.split("/");
-            // ["", "v", videoId, file]
-            if (segments.length != 4 || !segments[1].equals("v")) {
-                sendText(out, 404, "text/plain", "Not found", method);
-                return;
-            }
-            StreamInfo info = StreamCapture.get(segments[2]);
-            if (info == null) {
-                sendText(out, 404, "text/plain", "Unknown video", method);
-                return;
-            }
-            String file = segments[3];
-            if (file.equals("manifest.mpd")) {
-                sendText(out, 200, "application/dash+xml", manifest(info), method);
-                return;
-            }
-            int dot = file.indexOf('.');
-            int index;
-            try {
-                index = Integer.parseInt(dot < 0 ? file : file.substring(0, dot));
-            } catch (NumberFormatException e) {
-                index = -1;
-            }
-            if (index < 0 || index >= info.formats.size()) {
-                sendText(out, 404, "text/plain", "Unknown format", method);
-                return;
-            }
-            proxy(info.formats.get(index), method, headers.get("range"), out);
-        } catch (IOException e) {
-            // Renderers often close connections early when seeking.
-            Log.d("Proxy connection ended: " + e.getMessage());
-        } catch (Throwable t) {
-            Log.e("Proxy request failed", t);
-        }
-    }
-
-    private static void proxy(StreamInfo.Format format, String method, String range, OutputStream out)
-            throws IOException {
-        if (method.equals("HEAD")) {
-            // Answer from what we know, without touching YouTube.
-            StringBuilder head = statusLine(200)
-                    .append("Content-Type: ").append(format.container()).append("\r\n")
-                    .append("Accept-Ranges: bytes\r\n");
-            if (format.contentLength > 0) head.append("Content-Length: ").append(format.contentLength).append("\r\n");
-            finishHead(head, out);
-            return;
-        }
-
-        HttpURLConnection upstream = (HttpURLConnection) new URL(format.url).openConnection();
-        upstream.setConnectTimeout(10_000);
-        upstream.setReadTimeout(30_000);
-        upstream.setRequestProperty("User-Agent", userAgent);
-        upstream.setRequestProperty("Accept-Encoding", "identity");
-        if (range != null) upstream.setRequestProperty("Range", range);
-        try {
-            int status = upstream.getResponseCode();
-            if (status != 200 && status != 206) {
-                Log.i("Upstream HTTP " + status + " for itag " + format.itag);
-                StringBuilder head = statusLine(status == 416 ? 416 : 502);
-                head.append("Content-Length: 0\r\n");
-                finishHead(head, out);
-                return;
-            }
-            StringBuilder head = statusLine(status)
-                    .append("Content-Type: ").append(format.container()).append("\r\n")
-                    .append("Accept-Ranges: bytes\r\n");
-            String length = upstream.getHeaderField("Content-Length");
-            if (length != null) head.append("Content-Length: ").append(length).append("\r\n");
-            String contentRange = upstream.getHeaderField("Content-Range");
-            if (contentRange != null) head.append("Content-Range: ").append(contentRange).append("\r\n");
-            finishHead(head, out);
-
-            byte[] buf = new byte[64 * 1024];
-            try (InputStream body = upstream.getInputStream()) {
-                int n;
-                while ((n = body.read(buf)) != -1) out.write(buf, 0, n);
-            }
-            out.flush();
-        } finally {
-            upstream.disconnect();
-        }
-    }
-
-    private static void sendText(OutputStream out, int status, String type, String text, String method)
-            throws IOException {
-        byte[] body = text.getBytes(StandardCharsets.UTF_8);
-        StringBuilder head = statusLine(status)
-                .append("Content-Type: ").append(type).append("; charset=utf-8\r\n")
-                .append("Content-Length: ").append(body.length).append("\r\n");
-        finishHead(head, out);
-        if (!method.equals("HEAD")) out.write(body);
-        out.flush();
-    }
-
-    private static StringBuilder statusLine(int status) {
-        String reason;
-        switch (status) {
-            case 200: reason = "OK"; break;
-            case 206: reason = "Partial Content"; break;
-            case 404: reason = "Not Found"; break;
-            case 416: reason = "Range Not Satisfiable"; break;
-            default: reason = "Bad Gateway"; break;
-        }
-        return new StringBuilder("HTTP/1.1 ").append(status).append(' ').append(reason).append("\r\n");
-    }
-
-    private static void finishHead(StringBuilder head, OutputStream out) throws IOException {
-        head.append("transferMode.dlna.org: Streaming\r\n")
-                .append("contentFeatures.dlna.org: ").append(DLNA_FEATURES).append("\r\n")
-                .append("Connection: close\r\n\r\n");
-        out.write(head.toString().getBytes(StandardCharsets.UTF_8));
-    }
-
-    // endregion
-
     /** The phone's address as seen from the renderer's network. */
     static String localAddressFor(DlnaDevice device) {
-        try (java.net.DatagramSocket probe = new java.net.DatagramSocket()) {
+        try (DatagramSocket probe = new DatagramSocket()) {
             // UDP connect sends nothing, it only picks the route.
             probe.connect(InetAddress.getByName(device.host()), device.port());
             return probe.getLocalAddress().getHostAddress();

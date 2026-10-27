@@ -4,10 +4,10 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::time::Duration;
 
 use jni::objects::{JClass, JObject, JString};
-use jni::sys::{jboolean, jint, jlong, jstring, JNI_TRUE};
+use jni::sys::{jint, jlong, jstring};
 use jni::JNIEnv;
 
-use crate::{events, log, registry, server, upstream};
+use crate::{events, registry, server, upstream};
 
 fn string(env: &mut JNIEnv, value: &JString) -> String {
     env.get_string(value).map(Into::into).unwrap_or_default()
@@ -45,15 +45,6 @@ pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeSetUserAgent(
 ) {
     let user_agent = string(&mut env, &user_agent);
     guarded((), || upstream::set_user_agent(user_agent));
-}
-
-#[no_mangle]
-pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeSetDebug(
-    _env: JNIEnv,
-    _class: JClass,
-    enabled: jboolean,
-) {
-    log::set_debug(enabled == JNI_TRUE);
 }
 
 #[no_mangle]

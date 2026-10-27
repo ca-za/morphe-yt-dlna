@@ -27,13 +27,6 @@ final class DlnaController {
         }
     }
 
-    static void play(DlnaDevice device, String uri, String mimeType, String title, boolean video)
-            throws IOException {
-        Track track = new Track("");
-        track.title = title;
-        play(device, uri, mimeType, track, null, video);
-    }
-
     /** Loads a track with full metadata and starts it. {@code artUri} may be null. */
     static void play(DlnaDevice device, String uri, String mimeType, Track track, String artUri, boolean video)
             throws IOException {

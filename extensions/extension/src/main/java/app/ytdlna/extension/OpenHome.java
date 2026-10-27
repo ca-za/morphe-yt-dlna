@@ -20,10 +20,6 @@ final class OpenHome {
         playlist(device, "DeleteAll", "");
     }
 
-    static void deleteId(DlnaDevice device, int id) throws IOException {
-        playlist(device, "DeleteId", "<Value>" + id + "</Value>");
-    }
-
     /** Inserts a track after {@code afterId} (0 = at the start). Returns its id. */
     static int insert(DlnaDevice device, int afterId, String uri, String metadata) throws IOException {
         String response = playlist(device, "Insert", "<AfterId>" + afterId + "</AfterId>"

@@ -1,15 +1,8 @@
 //! Logging to logcat (tag "YtDlna") on Android, stderr elsewhere.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static DEBUG: AtomicBool = AtomicBool::new(true);
-
-pub fn set_debug(enabled: bool) {
-    DEBUG.store(enabled, Ordering::Relaxed);
-}
-
+/// Debug logging is compiled in for debug builds only.
 pub fn debug_enabled() -> bool {
-    DEBUG.load(Ordering::Relaxed)
+    cfg!(debug_assertions)
 }
 
 #[cfg(target_os = "android")]

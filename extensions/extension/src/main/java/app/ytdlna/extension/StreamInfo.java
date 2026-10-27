@@ -56,9 +56,6 @@ final class StreamInfo {
     // StreamingData field numbers.
     private static final int SD_FORMATS = 2;
     private static final int SD_ADAPTIVE_FORMATS = 3;
-    private static final int SD_DASH_MANIFEST_URL = 4;
-    private static final int SD_HLS_MANIFEST_URL = 5;
-    private static final int SD_SABR_URL = 15;
 
     // Format field numbers.
     private static final int F_ITAG = 1;
@@ -82,9 +79,6 @@ final class StreamInfo {
     String videoId = "";
     String title = "";
     long lengthSeconds;
-    String dashManifestUrl = "";
-    String hlsManifestUrl = "";
-    String sabrUrl = "";
     final List<Format> formats = new ArrayList<>();
     final long capturedAt = System.currentTimeMillis();
 
@@ -97,24 +91,8 @@ final class StreamInfo {
             info.lengthSeconds = Proto.varint(vd, VD_LENGTH_SECONDS);
         }
         for (Proto.Field f : Proto.parse(streamingData)) {
-            switch (f.number) {
-                case SD_FORMATS:
-                case SD_ADAPTIVE_FORMATS:
-                    if (f.wireType == Proto.BYTES) {
-                        info.formats.add(parseFormat(f.data, f.number == SD_ADAPTIVE_FORMATS));
-                    }
-                    break;
-                case SD_DASH_MANIFEST_URL:
-                    info.dashManifestUrl = f.string();
-                    break;
-                case SD_HLS_MANIFEST_URL:
-                    info.hlsManifestUrl = f.string();
-                    break;
-                case SD_SABR_URL:
-                    info.sabrUrl = f.string();
-                    break;
-                default:
-                    break;
+            if ((f.number == SD_FORMATS || f.number == SD_ADAPTIVE_FORMATS) && f.wireType == Proto.BYTES) {
+                info.formats.add(parseFormat(f.data, f.number == SD_ADAPTIVE_FORMATS));
             }
         }
         return info;
@@ -146,20 +124,10 @@ final class StreamInfo {
         return format;
     }
 
-    boolean hasDirectUrls() {
-        for (Format f : formats) {
-            if (f.hasUrl()) return true;
-        }
-        return false;
-    }
-
     String summary() {
         int withUrl = 0;
         for (Format f : formats) if (f.hasUrl()) withUrl++;
         return "videoId=" + videoId + " title=\"" + title + "\" length=" + lengthSeconds + "s"
-                + " formats=" + formats.size() + " withUrl=" + withUrl
-                + " dash=" + !dashManifestUrl.isEmpty()
-                + " hls=" + !hlsManifestUrl.isEmpty()
-                + " sabr=" + !sabrUrl.isEmpty();
+                + " formats=" + formats.size() + " withUrl=" + withUrl;
     }
 }
