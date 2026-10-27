@@ -17,6 +17,9 @@ add-on to the official [Morphe](https://morphe.software) patches.
 
 ## Install
 
+> **Alpha**: releases are pre-releases (`1.0.0-alpha.N`) for now. In Morphe Manager, open the
+> source under *Sources* and turn on **Pre-release patches**, otherwise it shows no version.
+
 1. Add this source to Morphe Manager:
    https://morphe.software/add-source?github=ca-za/morphe-yt-dlna
 2. Patch YouTube or YouTube Music with the official Morphe patches **and** "DLNA cast". The patch
