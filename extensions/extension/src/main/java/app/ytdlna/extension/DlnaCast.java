@@ -202,6 +202,7 @@ public final class DlnaCast {
         Context app = activity.getApplicationContext();
         StreamProxy.userAgent = userAgent(app);
         toast(activity, t("Verbinde mit ", "Connecting to ") + device.friendlyName + "…");
+        CastUi.install(activity);
         CastSession.start(app, device, info, prefs(app).getString(PREF_STREAM_HOST, ""));
     }
 

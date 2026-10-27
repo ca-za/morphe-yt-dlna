@@ -65,6 +65,22 @@ final class DlnaController {
         avTransport(device, "Seek", "<Unit>REL_TIME</Unit><Target>" + Track.upnpTime(positionMs) + "</Target>");
     }
 
+    /** Master volume 0-100, or -1 if the renderer has no RenderingControl. */
+    static int volume(DlnaDevice device) throws IOException {
+        if (device.renderingControlUrl == null) return -1;
+        String response = soap(device.renderingControlUrl, device.renderingControlType, "GetVolume",
+                "<InstanceID>0</InstanceID><Channel>Master</Channel>");
+        Matcher m = Pattern.compile("<CurrentVolume>(\\d+)</CurrentVolume>").matcher(response);
+        return m.find() ? Integer.parseInt(m.group(1)) : -1;
+    }
+
+    static void setVolume(DlnaDevice device, int volume) throws IOException {
+        if (device.renderingControlUrl == null) return;
+        soap(device.renderingControlUrl, device.renderingControlType, "SetVolume",
+                "<InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>"
+                        + Math.max(0, Math.min(100, volume)) + "</DesiredVolume>");
+    }
+
     /** Current position in ms, or -1 if unknown. */
     static long position(DlnaDevice device) throws IOException {
         String response = soap(device.avTransportControlUrl, device.avTransportType, "GetPositionInfo",

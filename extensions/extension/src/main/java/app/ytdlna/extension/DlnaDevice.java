@@ -21,6 +21,8 @@ final class DlnaDevice {
     String connectionManagerType = CONNECTION_MANAGER + "1";
     String connectionManagerControlUrl;
     String avTransportEventUrl;
+    String renderingControlType;
+    String renderingControlUrl;
 
     // OpenHome services, if the renderer has them.
     String playlistType;
@@ -137,6 +139,10 @@ final class DlnaDevice {
                                     avTransportType = serviceType;
                                     avTransportControlUrl = absolute;
                                     avTransportEventUrl = absoluteEvent;
+                                } else if (serviceType.startsWith("urn:schemas-upnp-org:service:RenderingControl:")
+                                        && renderingControlUrl == null) {
+                                    renderingControlType = serviceType;
+                                    renderingControlUrl = absolute;
                                 } else if (serviceType.startsWith("urn:av-openhome-org:service:Playlist:")
                                         && playlistControlUrl == null) {
                                     playlistType = serviceType;

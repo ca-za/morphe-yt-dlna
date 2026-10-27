@@ -54,6 +54,7 @@ final class CastSession implements StreamCapture.Listener {
         if (active != null) active.stop(false);
         active = new CastSession(context.getApplicationContext(), device, streamHost);
         active.begin(first);
+        CastUi.update();
     }
 
     static synchronized void stopActive(boolean stopRenderer) {
@@ -61,6 +62,7 @@ final class CastSession implements StreamCapture.Listener {
             active.stop(stopRenderer);
             active = null;
         }
+        CastUi.update();
     }
 
     final DlnaDevice device;
@@ -703,6 +705,28 @@ final class CastSession implements StreamCapture.Listener {
         Log.i("Phone follows the renderer to " + videoId);
         ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
         c.getTransportControls().skipToQueueItem(queueId);
+    }
+
+    // endregion
+
+    // region Volume
+
+    private int rendererVolume = -1;
+
+    /** Changes the renderer volume by {@code delta} and reports the new value. */
+    void adjustVolume(int delta, java.util.function.IntConsumer onVolume) {
+        if (stopped) return;
+        renderer.execute(() -> {
+            try {
+                if (rendererVolume < 0) rendererVolume = DlnaController.volume(device);
+                if (rendererVolume < 0) return;
+                rendererVolume = Math.max(0, Math.min(100, rendererVolume + delta));
+                DlnaController.setVolume(device, rendererVolume);
+                onVolume.accept(rendererVolume);
+            } catch (Exception e) {
+                Log.i("Volume change failed: " + e.getMessage());
+            }
+        });
     }
 
     // endregion
