@@ -154,6 +154,13 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         restoreVolumeAfterCrash(context);
         StreamCapture.addListener(this);
         if (musicApp) MusicMode.setListener(this);
+        if (!musicApp) {
+            // YouTube has no queue to reload the running video with: lower its quality instead.
+            main.post(LocalQuality::lower);
+            main.postDelayed(() -> {
+                if (!stopped) LocalQuality.lower();
+            }, 3000);
+        }
         // Nothing plays on the phone while casting.
         CastAudio.setMuted(true);
         main.postDelayed(() -> {
@@ -194,6 +201,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         playlistToken = null;
         main.post(() -> {
             boolean reloading = false;
+            if (!musicApp) LocalQuality.restore();
             if (controller != null) {
                 controller.unregisterCallback(callback);
                 // Back to the full streams (with video) on the phone.
