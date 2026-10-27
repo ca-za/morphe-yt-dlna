@@ -65,6 +65,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         active = new CastSession(context.getApplicationContext(), device, streamHost);
         active.begin(first);
         CastUi.update();
+        // The cast button stays while casting, also without renderers found in the background.
+        new Handler(Looper.getMainLooper()).post(DlnaCast::onRenderersChanged);
     }
 
     static synchronized void stopActive(boolean stopRenderer) {
@@ -74,6 +76,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             StreamProxy.stop();
         }
         CastUi.update();
+        new Handler(Looper.getMainLooper()).post(DlnaCast::onRenderersChanged);
     }
 
     final DlnaDevice device;

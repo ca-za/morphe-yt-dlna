@@ -10,7 +10,9 @@ import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** SSDP discovery of DLNA media renderers. */
 final class DlnaDiscovery {
@@ -22,6 +24,8 @@ final class DlnaDiscovery {
     private static final String SSDP_ADDRESS = "239.255.255.250";
     private static final int SSDP_PORT = 1900;
     private static final String SEARCH_TARGET = "urn:schemas-upnp-org:device:MediaRenderer:1";
+    /** Descriptions by location: repeated searches do not fetch them again. */
+    private static final Map<String, DlnaDevice> descriptions = new ConcurrentHashMap<>();
 
     private DlnaDiscovery() {
     }
@@ -76,8 +80,12 @@ final class DlnaDiscovery {
                         StandardCharsets.UTF_8), "location");
                 if (location == null || !seen.add(location)) continue;
                 try {
-                    DlnaDevice device = DlnaDevice.load(location);
-                    Log.i("Found renderer " + device + " at " + location);
+                    DlnaDevice device = descriptions.get(location);
+                    if (device == null) {
+                        device = DlnaDevice.load(location);
+                        descriptions.put(location, device);
+                        Log.i("Found renderer " + device + " at " + location);
+                    }
                     listener.onDevice(device);
                 } catch (Exception e) {
                     Log.d("Skipping " + location + ": " + e.getMessage());

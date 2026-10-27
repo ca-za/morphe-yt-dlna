@@ -10,7 +10,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
 import android.view.View;
-import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -21,6 +20,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -38,24 +38,7 @@ public final class DlnaCast {
     /** Set while re-dispatching a click to the original Google Cast dialog. */
     private static boolean passThroughClick;
 
-    private enum Kind {DEVICE, SEARCHING, GOOGLE_CAST, ADD_DEVICE, STREAM_HOST, STOP}
 
-    private static final class Entry {
-        final Kind kind;
-        final DlnaDevice device;
-        final String label;
-
-        Entry(Kind kind, DlnaDevice device, String label) {
-            this.kind = kind;
-            this.device = device;
-            this.label = label;
-        }
-
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
 
     private DlnaCast() {
     }
@@ -82,17 +65,168 @@ public final class DlnaCast {
         }
     }
 
-    /**
-     * Injection point: MediaRouteButton.setVisibility(int).
-     * The app hides the button without Google Cast devices; keep it for DLNA.
-     */
-    public static int getCastButtonVisibility(int visibility) {
-        return visibility == View.GONE ? View.VISIBLE : visibility;
+    /** The apps' cast button controllers and the name of their update method (see the patch). */
+    private static final Set<Object> castButtonControllers =
+            java.util.Collections.newSetFromMap(new WeakHashMap<>());
+    private static volatile String castButtonUpdate;
+    /** The app found Google Cast devices (its own answer, before DLNA renderers are added). */
+    static volatile boolean googleCastAvailable;
+
+    /** Controllers asked to update their buttons once, whatever they show now. */
+    private static final Set<Object> refreshPending =
+            java.util.Collections.newSetFromMap(new WeakHashMap<>());
+    /** The controller whose update runs now (main thread). */
+    private static Object updating;
+    private static boolean lastAvailable;
+
+    /** Injection point: start of the cast button controller's update. */
+    public static void setCastButtonController(Object controller) {
+        synchronized (castButtonControllers) {
+            castButtonControllers.add(controller);
+        }
+        updating = controller;
+        RendererScanner.init();
     }
 
-    /** Injection point: MediaRouteButton.setEnabled(boolean). */
-    public static boolean getCastButtonEnabled(boolean enabled) {
-        return true;
+    private static boolean dlnaAvailable() {
+        return RendererScanner.hasDevices() || CastSession.active() != null;
+    }
+
+    /** Injection point: the name of the controller's update method. */
+    public static void setCastButtonUpdate(String name) {
+        castButtonUpdate = name;
+    }
+
+    /**
+     * Injection point: the controller's "is a Google Cast device available" answer. The cast
+     * buttons also show for DLNA renderers and while casting.
+     */
+    public static boolean isCastAvailable(boolean googleCast) {
+        googleCastAvailable = googleCast;
+        lastAvailable = googleCast || dlnaAvailable();
+        return lastAvailable;
+    }
+
+    /**
+     * Injection point: whether the controller shows its buttons now. Reported different once
+     * after renderers came or went, so it updates its buttons and the layout around them.
+     */
+    public static boolean castButtonsShown(boolean shown) {
+        synchronized (castButtonControllers) {
+            if (updating != null && refreshPending.remove(updating)) return !lastAvailable;
+        }
+        return shown;
+    }
+
+    /**
+     * Renderers appeared or are gone, or a cast started or ended: the app's controllers update
+     * their buttons (and the layout around them) themselves. Main thread.
+     */
+    static void onRenderersChanged() {
+        String name = castButtonUpdate;
+        List<Object> controllers;
+        synchronized (castButtonControllers) {
+            controllers = new ArrayList<>(castButtonControllers);
+            refreshPending.addAll(controllers);
+        }
+        if (name == null) return;
+        for (Object controller : controllers) {
+            try {
+                java.lang.reflect.Method update = controller.getClass().getDeclaredMethod(name);
+                update.setAccessible(true);
+                update.invoke(controller);
+            } catch (Exception e) {
+                Log.e("Could not update the cast buttons", e);
+            }
+        }
+    }
+
+    /** Morphe setting: "Google Cast…" in the DLNA picker, leading to the app's own cast dialog. */
+    private static final String PREF_GOOGLE_CAST_LINK = "ytdlna_google_cast_link";
+
+    static boolean googleCastLinkEnabled(Context context) {
+        try {
+            return context.getSharedPreferences("morphe_prefs", Context.MODE_PRIVATE)
+                    .getBoolean(PREF_GOOGLE_CAST_LINK, false);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** The click on the app's cast button that the picker took over, passed on to the app. */
+    private static void openGoogleCast(View castButton) {
+        passThroughClick = true;
+        try {
+            castButton.performClick();
+        } finally {
+            passThroughClick = false;
+        }
+    }
+
+    private static void openGoogleCastFromApp() {
+        Activity activity = RendererScanner.currentActivity();
+        View button = activity == null ? null : findCastButton(activity.getWindow().getDecorView());
+        if (button == null) button = registeredCastButton();
+        if (button != null) {
+            openGoogleCast(button);
+        } else if (activity != null) {
+            toast(activity, t("Google Cast: im Player auf das Cast-Symbol tippen",
+                    "Google Cast: tap the cast icon in the player"));
+        }
+    }
+
+    /**
+     * A cast button the app's controllers keep (they register every button, also one of a
+     * player whose controls were not shown yet). Attached ones first.
+     */
+    private static View registeredCastButton() {
+        List<Object> controllers;
+        synchronized (castButtonControllers) {
+            controllers = new ArrayList<>(castButtonControllers);
+        }
+        View detached = null;
+        for (Object controller : controllers) {
+            for (java.lang.reflect.Field field : controller.getClass().getDeclaredFields()) {
+                if (!java.util.Collection.class.isAssignableFrom(field.getType())) continue;
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(controller);
+                    if (!(value instanceof java.util.Collection)) continue;
+                    for (Object item : new ArrayList<>((java.util.Collection<?>) value)) {
+                        if (!(item instanceof View)) continue;
+                        if (((View) item).isAttachedToWindow()) return (View) item;
+                        if (detached == null) detached = (View) item;
+                    }
+                } catch (Exception ignored) {
+                    // Not readable: the next field.
+                }
+            }
+        }
+        return detached;
+    }
+
+    /** A cast button of the app (MediaRouteButton or YouTube's newer entry point button). */
+    private static View findCastButton(View view) {
+        for (Class<?> c = view.getClass(); c != null && c != View.class; c = c.getSuperclass()) {
+            String name = c.getName();
+            if (name.endsWith("MediaRouteButton") || name.endsWith("MdxEntryPointButton")) {
+                // Its dialog needs a window.
+                return view.isAttachedToWindow() ? view : null;
+            }
+        }
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View found = findCastButton(group.getChildAt(i));
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    /** Renderers the user added by address. */
+    static Set<String> savedDevices(Context context) {
+        return new HashSet<>(prefs(context).getStringSet(PREF_MANUAL_DEVICES, new HashSet<>()));
     }
 
     /**
@@ -103,79 +237,75 @@ public final class DlnaCast {
      */
     static void showPicker(Activity activity, View castButton, StreamInfo current, Runnable onDone) {
         boolean[] followUp = {false};
-        List<Entry> devices = new ArrayList<>();
-        AlertDialog.Builder builder = new AlertDialog.Builder(activity, dialogTheme(activity));
-        ArrayAdapter<Entry> adapter = new ArrayAdapter<>(builder.getContext(), android.R.layout.simple_list_item_1);
+        List<DlnaDevice> devices = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         boolean[] searching = {true};
+        DevicePicker[] picker = new DevicePicker[1];
+        picker[0] = new DevicePicker(activity, t("Gerät auswählen", "Select a device"), () -> {
+            if (!followUp[0] && onDone != null) onDone.run();
+        });
 
+        // Closes the picker, then runs the chosen action.
+        java.util.function.Function<Runnable, Runnable> choose = action -> () -> {
+            picker[0].dismiss();
+            action.run();
+        };
         Runnable rebuild = () -> {
-            adapter.clear();
-            adapter.addAll(devices);
-            if (searching[0]) adapter.add(new Entry(Kind.SEARCHING, null, t("Suche Geräte…", "Searching for devices…")));
-            else if (devices.isEmpty()) adapter.add(new Entry(Kind.SEARCHING, null, t("Keine DLNA-Geräte gefunden", "No DLNA devices found")));
+            List<DevicePicker.Row> rows = new ArrayList<>();
             CastSession session = CastSession.active();
+            for (DlnaDevice device : devices) {
+                boolean connected = session != null && session.device.location.equals(device.location);
+                rows.add(new DevicePicker.Row(DevicePicker.Icon.TV, device.friendlyName,
+                        connected ? t("Verbunden", "Connected") : "DLNA · " + device.host(),
+                        choose.apply(() -> cast(activity, device, current))));
+            }
+            if (!searching[0] && devices.isEmpty()) {
+                rows.add(new DevicePicker.Row(DevicePicker.Icon.NONE,
+                        t("Keine DLNA-Geräte gefunden", "No DLNA devices found"), null, null));
+            }
             if (session != null) {
-                adapter.add(new Entry(Kind.STOP, session.device, t("Wiedergabe stoppen auf ", "Stop playback on ") + session.device.friendlyName));
+                rows.add(new DevicePicker.Row(DevicePicker.Icon.STOP,
+                        t("Wiedergabe stoppen auf ", "Stop playback on ") + session.device.friendlyName, null,
+                        choose.apply(() -> stop(activity))));
             }
-            if (castButton != null) {
-                adapter.add(new Entry(Kind.GOOGLE_CAST, null, t("Google Cast…", "Google Cast…")));
+            if (googleCastLinkEnabled(activity)) {
+                rows.add(new DevicePicker.Row(DevicePicker.Icon.CAST, t("Google Cast…", "Google Cast…"), null,
+                        choose.apply(() -> {
+                            if (castButton != null) {
+                                openGoogleCast(castButton);
+                            } else {
+                                // Opened from the share menu: once it is closed, the app's own
+                                // cast button opens its Google Cast dialog.
+                                main.postDelayed(DlnaCast::openGoogleCastFromApp, 400);
+                            }
+                        })));
             }
-            adapter.add(new Entry(Kind.ADD_DEVICE, null, t("Gerät per Adresse hinzufügen…", "Add device by address…")));
-            adapter.add(new Entry(Kind.STREAM_HOST, null, t("Stream-Adresse dieses Geräts…", "This device's stream address…")));
-            adapter.notifyDataSetChanged();
+            rows.add(new DevicePicker.Row(DevicePicker.Icon.ADD,
+                    t("Gerät per Adresse hinzufügen", "Add a device by address"), null, () -> {
+                        followUp[0] = true;
+                        picker[0].dismiss();
+                        showAddDevice(activity, onDone);
+                    }));
+            rows.add(new DevicePicker.Row(DevicePicker.Icon.LINK,
+                    t("Stream-Adresse dieses Geräts", "This device's stream address"), null, () -> {
+                        followUp[0] = true;
+                        picker[0].dismiss();
+                        showStreamHost(activity, onDone);
+                    }));
+            picker[0].setSearching(searching[0]);
+            picker[0].setRows(rows);
         };
         rebuild.run();
-
-        String title = current == null
-                ? t("DLNA: Kein Video geladen", "DLNA: No video loaded")
-                : t("Streamen: ", "Cast: ") + current.title;
-        AlertDialog dialog = builder
-                .setTitle(title)
-                .setAdapter(adapter, null)
-                .setNegativeButton(android.R.string.cancel, null)
-                .setOnDismissListener(d -> {
-                    if (!followUp[0] && onDone != null) onDone.run();
-                })
-                .create();
-        dialog.getListView().setOnItemClickListener((parent, view, position, id) -> {
-            Entry entry = adapter.getItem(position);
-            if (entry == null || entry.kind == Kind.SEARCHING) return;
-            followUp[0] = entry.kind == Kind.ADD_DEVICE || entry.kind == Kind.STREAM_HOST;
-            dialog.dismiss();
-            switch (entry.kind) {
-                case DEVICE:
-                    cast(activity, entry.device, current);
-                    break;
-                case STOP:
-                    stop(activity);
-                    break;
-                case GOOGLE_CAST:
-                    passThroughClick = true;
-                    try {
-                        castButton.performClick();
-                    } finally {
-                        passThroughClick = false;
-                    }
-                    break;
-                case ADD_DEVICE:
-                    showAddDevice(activity, onDone);
-                    break;
-                case STREAM_HOST:
-                    showStreamHost(activity, onDone);
-                    break;
-                default:
-                    break;
-            }
-        });
-        dialog.show();
+        picker[0].show();
 
         DlnaDiscovery.Listener onDevice = device -> main.post(() -> {
             String key = device.udn.isEmpty() ? device.location : device.udn;
             if (!seen.add(key)) return;
-            devices.add(new Entry(Kind.DEVICE, device, device.toString()));
+            devices.add(device);
             rebuild.run();
         });
+        // Renderers found in the background are listed right away; the search below adds new ones.
+        for (DlnaDevice device : RendererScanner.devices()) onDevice.onDevice(device);
         background.execute(() -> {
             for (String location : prefs(activity).getStringSet(PREF_MANUAL_DEVICES, new HashSet<>())) {
                 background.execute(() -> {
@@ -234,6 +364,7 @@ public final class DlnaCast {
                             saved.add(finalLocation);
                             prefs.edit().putStringSet(PREF_MANUAL_DEVICES, saved).apply();
                             toast(activity, t("Hinzugefügt: ", "Added: ") + device.friendlyName);
+                            RendererScanner.scanNow();
                         } catch (Exception e) {
                             toast(activity, t("Gerät nicht erreichbar: ", "Device unreachable: ") + e.getMessage());
                         }

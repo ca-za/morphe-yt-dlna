@@ -35,6 +35,57 @@ final class TestHooks {
     private TestHooks() {
     }
 
+    /** The resumed activity from the app's ActivityThread (the scanner may start after its resume). */
+    @SuppressWarnings("PrivateApi")
+    private static android.app.Activity resumedActivity() {
+        try {
+            Class<?> threadClass = Class.forName("android.app.ActivityThread");
+            Object thread = threadClass.getMethod("currentActivityThread").invoke(null);
+            java.lang.reflect.Field activitiesField = threadClass.getDeclaredField("mActivities");
+            activitiesField.setAccessible(true);
+            for (Object record : ((java.util.Map<?, ?>) activitiesField.get(thread)).values()) {
+                java.lang.reflect.Field paused = record.getClass().getDeclaredField("paused");
+                paused.setAccessible(true);
+                if (paused.getBoolean(record)) continue;
+                java.lang.reflect.Field activity = record.getClass().getDeclaredField("activity");
+                activity.setAccessible(true);
+                return (android.app.Activity) activity.get(record);
+            }
+        } catch (Exception e) {
+            Log.d("No resumed activity: " + e);
+        }
+        return null;
+    }
+
+    private static void collectCastButtons(android.view.View view, org.json.JSONArray out) throws org.json.JSONException {
+        String name = view.getClass().getName();
+        if (name.endsWith("MediaRouteButton") || name.endsWith("MdxEntryPointButton")
+                || view.getClass().getSuperclass() != null && view.getClass().getSuperclass().getName().endsWith("MediaRouteButton")) {
+            int[] location = new int[2];
+            view.getLocationOnScreen(location);
+            String id = "";
+            try {
+                if (view.getId() != android.view.View.NO_ID) id = view.getResources().getResourceEntryName(view.getId());
+            } catch (Exception ignored) {
+                // No resource name.
+            }
+            // Faded out (YouTube's player controls) counts as hidden for the eye.
+            float alpha = 1;
+            for (android.view.ViewParent p = view.getParent(); p instanceof android.view.View; p = p.getParent()) {
+                alpha *= ((android.view.View) p).getAlpha();
+            }
+            out.put(new org.json.JSONObject().put("class", view.getClass().getSimpleName()).put("id", id)
+                    .put("shown", view.isShown()).put("enabled", view.isEnabled())
+                    .put("alpha", alpha * view.getAlpha())
+                    .put("x", location[0]).put("y", location[1])
+                    .put("width", view.getWidth()).put("height", view.getHeight()));
+        }
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) collectCastButtons(group.getChildAt(i), out);
+        }
+    }
+
     static boolean isEnabled() {
         return ENABLED;
     }
@@ -86,6 +137,25 @@ final class TestHooks {
                         editor.putStringSet("manual_devices", devices);
                     }
                     if (host != null) editor.putString("stream_host", host);
+                    if (intent.hasExtra("showCastButton")) {
+                        // Morphe's "Hide cast button" (YouTube, YouTube Music), on by default. It
+                        // is read at the app start: "restart" tells the tests to start it again.
+                        android.content.SharedPreferences morphe =
+                                context.getSharedPreferences("morphe_prefs", Context.MODE_PRIVATE);
+                        boolean hide = !Boolean.parseBoolean(intent.getStringExtra("showCastButton"));
+                        boolean changed = false;
+                        for (String key : new String[]{"morphe_hide_cast_button", "morphe_music_hide_cast_button"}) {
+                            if (morphe.getBoolean(key, true) != hide) changed = true;
+                        }
+                        morphe.edit().putBoolean("morphe_hide_cast_button", hide)
+                                .putBoolean("morphe_music_hide_cast_button", hide).commit();
+                        result.put("restart", changed);
+                    }
+                    if (intent.hasExtra("googleCastLink")) {
+                        context.getSharedPreferences("morphe_prefs", Context.MODE_PRIVATE).edit()
+                                .putBoolean("ytdlna_google_cast_link",
+                                        Boolean.parseBoolean(intent.getStringExtra("googleCastLink"))).commit();
+                    }
                     if (intent.hasExtra("preferHls")) {
                         StreamProxy.preferHls = Boolean.parseBoolean(intent.getStringExtra("preferHls"));
                     }
@@ -101,6 +171,21 @@ final class TestHooks {
                     result.put("ok", true);
                     break;
                 }
+                case "castButtons": {
+                    // Cast buttons of the visible activity: shown (with all parents) and where.
+                    org.json.JSONArray buttons = new org.json.JSONArray();
+                    android.app.Activity activity = RendererScanner.currentActivity();
+                    if (activity == null) activity = resumedActivity();
+                    if (activity != null) collectCastButtons(activity.getWindow().getDecorView(), buttons);
+                    result.put("buttons", buttons);
+                    result.put("ok", true);
+                    break;
+                }
+                case "rescan":
+                    // Searches now; the result shows in "status" (renderers) after about 3 s.
+                    RendererScanner.scanNow();
+                    result.put("ok", true);
+                    break;
                 case "stop":
                     CastSession.stopActive(true);
                     result.put("ok", true);
@@ -152,6 +237,8 @@ final class TestHooks {
         out.put("muted", CastAudio.isMuted());
         CastSession session = CastSession.active();
         out.put("casting", session != null);
+        out.put("renderers", RendererScanner.devices().size());
+        out.put("googleCast", DlnaCast.googleCastAvailable);
         if (session != null) out.put("session", session.status());
         // State of the app's player, from its media session.
         LocalPlayer player = new LocalPlayer(context, main, new LocalPlayer.Listener() {

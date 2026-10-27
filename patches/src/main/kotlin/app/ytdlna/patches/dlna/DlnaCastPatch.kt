@@ -2,6 +2,7 @@ package app.ytdlna.patches.dlna
 
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructionsWithLabels
+import app.morphe.patcher.extensions.InstructionExtensions.getInstruction
 import app.morphe.patcher.patch.PatchException
 import app.morphe.patcher.patch.booleanOption
 import app.morphe.patcher.patch.bytecodePatch
@@ -11,6 +12,7 @@ import app.morphe.patcher.extensions.InstructionExtensions.instructions
 import app.morphe.patcher.extensions.InstructionExtensions.replaceInstruction
 import com.android.tools.smali.dexlib2.AccessFlags
 import com.android.tools.smali.dexlib2.Opcode
+import com.android.tools.smali.dexlib2.iface.instruction.TwoRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
@@ -45,6 +47,8 @@ private fun audioTrackCall(instruction: com.android.tools.smali.dexlib2.iface.in
 private const val MDX_MEDIA_ROUTE_BUTTON_CLASS =
     "Lcom/google/android/libraries/youtube/mdx/mediaroute/MdxMediaRouteButton;"
 private const val SHARE_ACTIVITY = "app.ytdlna.extension.DlnaShareActivity"
+private const val MDX_ENTRY_POINT_BUTTON_CLASS =
+    "Lcom/google/android/libraries/youtube/mdx/mediaroute/entrypoint/MdxEntryPointButton;"
 
 /** SSDP discovery needs a multicast lock; network and Wi-Fi state access the apps already have. */
 private val PERMISSIONS = listOf("android.permission.CHANGE_WIFI_MULTICAST_STATE")
@@ -59,7 +63,9 @@ private object PatchResources {
 /** File the Morphe settings patch merges add-on preferences from. */
 private const val ADD_ON_PREFERENCES_FILE = "morphe_addon_prefs.xml"
 
+/** Morphe's "Player" settings screens, where our switches go. */
 private const val MUSIC_PLAYER_SETTINGS_SCREEN = "morphe_settings_music_screen_4_player"
+private const val YOUTUBE_PLAYER_SETTINGS_SCREEN = "morphe_settings_screen_05_player"
 
 private val ALBUM_ART_SWITCH = """
     <SwitchPreference
@@ -69,7 +75,30 @@ private val ALBUM_ART_SWITCH = """
         android:defaultValue="true" />
 """.trimIndent()
 
+private val GOOGLE_CAST_LINK_SWITCH = """
+    <SwitchPreference
+        android:key="ytdlna_google_cast_link"
+        android:title="@string/ytdlna_google_cast_link_title"
+        android:summary="@string/ytdlna_google_cast_link_summary"
+        android:defaultValue="false" />
+""".trimIndent()
+
+/** Strings of both apps, by resource folder. */
 private val STRINGS = mapOf(
+    "values" to listOf(
+        "ytdlna_google_cast_link_title" to "DLNA: Google Cast in the device list",
+        "ytdlna_google_cast_link_summary" to "Shows “Google Cast…” in the DLNA device list (also when " +
+            "opened from the share menu), leading to the app's own cast dialog.",
+    ),
+    "values-de" to listOf(
+        "ytdlna_google_cast_link_title" to "DLNA: Google Cast in der Geräteauswahl",
+        "ytdlna_google_cast_link_summary" to "Zeigt „Google Cast…“ in der DLNA-Geräteauswahl (auch beim " +
+            "Öffnen über Teilen); führt zum Cast-Dialog der App.",
+    ),
+)
+
+/** Strings of YouTube Music only. */
+private val MUSIC_STRINGS = mapOf(
     "values" to listOf(
         "ytdlna_album_art_lookup_title" to "DLNA: Album covers from music databases",
         "ytdlna_album_art_lookup_summary" to "Shows the album cover from Deezer or iTunes on the TV. " +
@@ -103,12 +132,12 @@ private val dlnaManifestPatch = resourcePatch {
         val isMusic = document("AndroidManifest.xml").use { doc ->
             doc.documentElement.getAttribute("package").contains("music")
         }
-        if (isMusic) {
-            // Strings for our settings.
-            // Added like Morphe adds strings: to strings.xml without decoding it. A file written
-            // this way adds its strings to the app's; if another patch already decoded the
-            // file, the strings are appended to it.
-            STRINGS.forEach { (folder, strings) ->
+        // Strings for our settings.
+        // Added like Morphe adds strings: to strings.xml without decoding it. A file written
+        // this way adds its strings to the app's; if another patch already decoded the
+        // file, the strings are appended to it.
+        (if (isMusic) listOf(STRINGS, MUSIC_STRINGS) else listOf(STRINGS)).forEach { set ->
+            set.forEach { (folder, strings) ->
                 val elements = strings.joinToString("") { (name, value) ->
                     "    <string name=\"$name\">${escapeXml(value)}</string>\n"
                 }
@@ -123,9 +152,15 @@ private val dlnaManifestPatch = resourcePatch {
                     writeText(text.substring(0, closing) + elements + text.substring(closing))
                 }
             }
-            // Switch in the Morphe settings (Player screen). Merged by Morphe's settings patch;
-            // without it the switch is absent and the default (on) is used.
-            val screen = "<screen key=\"$MUSIC_PLAYER_SETTINGS_SCREEN\">\n$ALBUM_ART_SWITCH\n</screen>"
+        }
+        // Switches in the Morphe settings (Player screen). Merged by Morphe's settings patch;
+        // without it the switches are absent and their defaults are used.
+        run {
+            val screen = if (isMusic) {
+                "<screen key=\"$MUSIC_PLAYER_SETTINGS_SCREEN\">\n$ALBUM_ART_SWITCH\n$GOOGLE_CAST_LINK_SWITCH\n</screen>"
+            } else {
+                "<screen key=\"$YOUTUBE_PLAYER_SETTINGS_SCREEN\">\n$GOOGLE_CAST_LINK_SWITCH\n</screen>"
+            }
             val declaration = get(ADD_ON_PREFERENCES_FILE, false)
             if (declaration.exists() && declaration.readText().contains("</morphe-add-on-preferences>")) {
                 declaration.writeText(
@@ -203,7 +238,9 @@ val dlnaCastPatch = bytecodePatch(
     name = "DLNA cast",
     description = "Adds DLNA / UPnP casting to the cast button. " +
         "Streams the current video or song to a DLNA media renderer on the local network. " +
-        "Requires the official Morphe patches (with GmsCore support).",
+        "Requires the official Morphe patches (with GmsCore support). " +
+        "The cast button shows when a DLNA renderer is found; turn off Morphe's \"Hide cast button\" " +
+        "(on by default) to see it. Casting from the share menu works either way.",
     default = true
 ) {
     compatibleWith(COMPATIBILITY_YOUTUBE, COMPATIBILITY_YOUTUBE_MUSIC)
@@ -326,43 +363,45 @@ val dlnaCastPatch = bytecodePatch(
             }
         }
 
-        // The app hides and disables the cast button when no Google Cast device is on the
-        // network. Keep it usable so DLNA devices can be reached without a Chromecast.
-        val castButtonClass = CastButtonPerformClickFingerprint.classDef
-        castButtonClass.methods.single { method ->
-            method.name == "setVisibility" && method.parameterTypes.map { it.toString() } == listOf("I")
-        }.addInstructions(
-            0,
-            """
-                invoke-static/range { p1 .. p1 }, $CAST_CLASS->getCastButtonVisibility(I)I
-                move-result p1
-            """
-        )
-        if (castButtonClass.methods.none { it.name == "setEnabled" }) {
-            castButtonClass.methods.add(
-                ImmutableMethod(
-                    castButtonClass.type,
-                    "setEnabled",
-                    listOf(ImmutableMethodParameter("Z", null, null)),
-                    "V",
-                    AccessFlags.PUBLIC.value,
-                    null,
-                    null,
-                    MutableMethodImplementation(2),
-                ).toMutable().apply {
-                    addInstructions(
-                        0,
-                        """
-                            invoke-static { p1 }, $CAST_CLASS->getCastButtonEnabled(Z)Z
-                            move-result p1
-                            invoke-super { p0, p1 }, Landroid/view/View;->setEnabled(Z)V
-                            return-void
-                        """
-                    )
-                }
+        // The app shows its cast buttons only when a Google Cast device is available. Its button
+        // controller decides that in one place for all buttons (and tells other parts of the
+        // layout, like the mini player): there, DLNA renderers count as well.
+        // The answer comes from one of three branches (casting disabled, a remembered device, the
+        // media router); they meet where it is compared with the last one: `if (shown != available)`.
+        CastButtonControllerUpdateFingerprint.method.apply {
+            val list = instructions.toList()
+            val compare = list.indices.firstOrNull { i ->
+                val read = list[i]
+                val next = list.getOrNull(i + 1)
+                read.opcode == Opcode.IGET_BOOLEAN &&
+                    ((read as ReferenceInstruction).reference as FieldReference).definingClass == definingClass &&
+                    (next?.opcode == Opcode.IF_EQ || next?.opcode == Opcode.IF_NE) &&
+                    (next as TwoRegisterInstruction).registerA == (read as TwoRegisterInstruction).registerA
+            } ?: throw PatchException("Cast button availability check not found")
+            val shown = getInstruction<TwoRegisterInstruction>(compare).registerA
+            val branch = getInstruction<TwoRegisterInstruction>(compare + 1)
+            val available = if (branch.registerA == shown) branch.registerB else branch.registerA
+            // After the field read, which is where the branches meet (a label), not before it.
+            // "Shown" is reported different once after renderers came or went, so the controller
+            // updates its buttons although the Google Cast answer did not change.
+            addInstructions(
+                compare + 1,
+                """
+                    invoke-static/range { v$available .. v$available }, $CAST_CLASS->isCastAvailable(Z)Z
+                    move-result v$available
+                    invoke-static/range { v$shown .. v$shown }, $CAST_CLASS->castButtonsShown(Z)Z
+                    move-result v$shown
+                """
             )
-        } else {
-            throw PatchException("Cast button already overrides setEnabled")
+            // The controller, to run this update again when renderers come or go.
+            addInstructions(
+                0,
+                """
+                    invoke-static/range { p0 .. p0 }, $CAST_CLASS->setCastButtonController(Ljava/lang/Object;)V
+                    const-string v0, "$name"
+                    invoke-static { v0 }, $CAST_CLASS->setCastButtonUpdate(Ljava/lang/String;)V
+                """
+            )
         }
 
         // Show the DLNA device picker when the cast button is tapped.
@@ -382,6 +421,42 @@ val dlnaCastPatch = bytecodePatch(
             mutableClassDefBy(classDef).methods.firstOrNull { method ->
                 method.name == "performClick" && method.parameterTypes.isEmpty() && method.returnType == "Z"
             }?.addInstructionsWithLabels(0, castClickHook)
+        }
+
+        // YouTube's newer cast button (21.4x) is no MediaRouteButton: it gets a performClick
+        // that opens the picker as well.
+        classDefByOrNull(MDX_ENTRY_POINT_BUTTON_CLASS)?.let { classDef ->
+            val button = mutableClassDefBy(classDef)
+            if (button.methods.any { it.name == "performClick" && it.parameterTypes.isEmpty() }) {
+                throw PatchException("Cast entry point button already overrides performClick")
+            }
+            button.methods.add(
+                ImmutableMethod(
+                    button.type,
+                    "performClick",
+                    listOf(),
+                    "Z",
+                    AccessFlags.PUBLIC.value,
+                    null,
+                    null,
+                    MutableMethodImplementation(2),
+                ).toMutable().apply {
+                    addInstructionsWithLabels(
+                        0,
+                        """
+                            invoke-static { p0 }, $CAST_CLASS->onCastButtonClick(Landroid/view/View;)Z
+                            move-result v0
+                            if-eqz v0, :original
+                            const/4 v0, 0x1
+                            return v0
+                            :original
+                            invoke-super { p0 }, ${button.superclass}->performClick()Z
+                            move-result v0
+                            return v0
+                        """
+                    )
+                }
+            )
         }
     }
 }

@@ -1,7 +1,10 @@
 package app.ytdlna.patches.dlna
 
 import app.morphe.patcher.Fingerprint
+import com.android.tools.smali.dexlib2.Opcode
+import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 import com.android.tools.smali.dexlib2.iface.reference.StringReference
 
 internal const val STREAMING_DATA_CLASS =
@@ -41,6 +44,33 @@ internal object CastButtonPerformClickFingerprint : Fingerprint(
     parameters = listOf(),
     strings = listOf("com.android.systemui.action.LAUNCH_MEDIA_OUTPUT_DIALOG")
 )
+
+/**
+ * The cast button controller's update (YouTube anqm.d, Music xrn.c): asks the media router
+ * whether a Google Cast device is available (a static call taking the route selector and flags),
+ * publishes the answer and shows or hides all cast buttons accordingly. Its visual element id
+ * 11208 is the cast button's.
+ */
+internal object CastButtonControllerUpdateFingerprint : Fingerprint(
+    returnType = "V",
+    parameters = listOf(),
+    custom = { method, _ ->
+        val instructions = method.implementation?.instructions?.toList().orEmpty()
+        instructions.any { (it as? NarrowLiteralInstruction)?.narrowLiteral == CAST_BUTTON_ELEMENT_ID } &&
+            instructions.any { routeAvailableCall(it) } &&
+            instructions.any { ((it as? ReferenceInstruction)?.reference as? MethodReference)?.name == "setEnabled" }
+    }
+)
+
+internal const val CAST_BUTTON_ELEMENT_ID = 11208
+
+/** MediaRouter.isRouteAvailable(selector, flags): static, (L...;I)Z. */
+internal fun routeAvailableCall(instruction: com.android.tools.smali.dexlib2.iface.instruction.Instruction): Boolean {
+    if (instruction.opcode != Opcode.INVOKE_STATIC) return false
+    val reference = (instruction as ReferenceInstruction).reference as? MethodReference ?: return false
+    val parameters = reference.parameterTypes.map { it.toString() }
+    return reference.returnType == "Z" && parameters.size == 2 && parameters[0].startsWith("L") && parameters[1] == "I"
+}
 
 /**
  * Called with (player response model, video id) when the player loads a new video or track.
