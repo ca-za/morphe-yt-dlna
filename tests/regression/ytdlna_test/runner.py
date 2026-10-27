@@ -105,12 +105,14 @@ def _run_scenarios(apk: build.ApkInfo, bundle: Path, args, out_dir: Path, watch:
                 report["results"].append({"name": name, "status": "skip", "detail": f"after {aborted} failed"})
                 continue
             t0 = time.monotonic()
-            try:
-                result = fn(ctx)
-            except Skip as e:
-                result = Result("skip", str(e))
-            except Exception as e:
-                result = Result("fail", f"{type(e).__name__}: {e}", {"traceback": traceback.format_exc()})
+            result = _run_scenario(fn, ctx)
+            if result.status == "fail":
+                # A dialog of the app or the account (like the bedtime reminder) may have come up
+                # during the scenario: closed, the scenario runs once more.
+                closed = ctx.ui.dismiss_dialogs()
+                if closed:
+                    result = _run_scenario(fn, ctx)
+                    result.detail = f"{result.detail} (run again after closing {', '.join(closed)})".strip()
             entry = {"name": name, "doc": (fn.__doc__ or "").strip(), "status": result.status,
                      "detail": result.detail, "evidence": result.evidence,
                      "seconds": round(time.monotonic() - t0, 1)}
@@ -142,6 +144,15 @@ def _run_scenarios(apk: build.ApkInfo, bundle: Path, args, out_dir: Path, watch:
     report["verdict"] = "fail" if "fail" in statuses else "pass"
     report["seconds"] = round(time.monotonic() - started)
     return report
+
+
+def _run_scenario(fn, ctx) -> Result:
+    try:
+        return fn(ctx)
+    except Skip as e:
+        return Result("skip", str(e))
+    except Exception as e:
+        return Result("fail", f"{type(e).__name__}: {e}", {"traceback": traceback.format_exc()})
 
 
 def _write(report: dict, out_dir: Path) -> dict:

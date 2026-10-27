@@ -126,6 +126,7 @@ class Node:
     desc: str
     bounds: tuple[int, int, int, int]
     package: str = ""
+    enabled: bool = True
 
     @property
     def center(self) -> tuple[int, int]:
@@ -154,7 +155,8 @@ class Ui:
         for n in root.iter("node"):
             b = [int(v) for v in re.findall(r"\d+", n.get("bounds", "[0,0][0,0]"))]
             nodes.append(Node(n.get("resource-id", "").split("/")[-1], n.get("text", ""),
-                              n.get("content-desc", ""), tuple(b), n.get("package", "")))
+                              n.get("content-desc", ""), tuple(b), n.get("package", ""),
+                              n.get("enabled", "true") == "true"))
         return nodes
 
     def find(self, rid: str = None, text: str = None, contains: str = None, nodes=None) -> "Node | None":
@@ -198,6 +200,10 @@ class Ui:
     # app versions (YouTube 21.20+, Music 9.40+); keeping the installed version is wanted here.
     DISMISS_CONTAINS = ["I want experimental"]
 
+    # Sheets closed with Back, found by their title: YouTube's bedtime reminder of the account
+    # (it comes up in the evening, any time during a run).
+    DISMISS_BY_BACK = ["Sleep time?", "Zeit zum Schlafen"]
+
     def dismiss_dialogs(self, rounds: int = 4) -> list[str]:
         """Taps known dismiss buttons until none is left. Returns what was tapped."""
         tapped = []
@@ -208,7 +214,13 @@ class Ui:
                 or next((n for n in nodes if n.text in ("Allow", "Zulassen")
                          and "permissioncontroller" in n.package), None)
             if not hit:
-                break
+                sheet = next((n for title in self.DISMISS_BY_BACK for n in nodes if n.text == title), None)
+                if not sheet:
+                    break
+                self.device.key("KEYCODE_BACK")
+                tapped.append(sheet.text)
+                time.sleep(1.5)
+                continue
             self.tap(hit)
             tapped.append(hit.text)
             time.sleep(1.5)

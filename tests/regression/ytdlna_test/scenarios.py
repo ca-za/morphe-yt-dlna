@@ -16,7 +16,7 @@ import urllib.request
 from dataclasses import dataclass, field
 
 from .control import Control
-from .device import Device, LogStream, Ui
+from .device import Node, Device, LogStream, Ui
 from .renderer import Renderer
 
 PLAYING, PAUSED = 3, 2
@@ -83,6 +83,20 @@ def renderer_state_is(ctx: Context, state: str, timeout: float) -> bool:
 def launch(ctx: Context) -> Result:
     """App starts, plays the test video and the test hooks answer."""
     ctx.phone.wake()
+    started = _start_app(ctx)
+    if started.status != "pass":
+        return started
+    # Morphe hides the cast button by default; it reads its settings when the app starts.
+    if ctx.control.cmd("setup", showCastButton="true").get("restart"):
+        started = _start_app(ctx)
+        if started.status != "pass":
+            return started
+    ctx.control.cmd("setup", device=ctx.renderer_device_url, host=ctx.stream_host, albumArt="true")
+    ctx.ui.dismiss_dialogs()
+    return started
+
+
+def _start_app(ctx: Context) -> Result:
     ctx.phone.sh(f"am force-stop {ctx.package}")
     since = ctx.logs.mark()
     ctx.phone.sh(f"am start -a android.intent.action.VIEW -d '{TEST_VIDEO[ctx.app][1]}' -p {ctx.package}")
@@ -95,8 +109,6 @@ def launch(ctx: Context) -> Result:
         ctx.phone.sh(f"am start -a android.intent.action.VIEW -d '{TEST_VIDEO[ctx.app][1]}' -p {ctx.package}")
     else:
         return Result("fail", "test hooks never got ready (no video loaded?)", {"dismissed": dismissed})
-    ctx.control.cmd("setup", device=ctx.renderer_device_url, host=ctx.stream_host, albumArt="true")
-    ctx.ui.dismiss_dialogs()
     return Result("pass", "", {"dismissed": dismissed})
 
 
@@ -123,19 +135,136 @@ def video_id_hook(ctx: Context) -> Result:
 
 
 def cast_button(ctx: Context) -> Result:
-    """The cast button is shown. Required in YouTube Music; in YouTube it needs a Cast device on the network."""
+    """The cast button shows when a renderer is found, and opens the DLNA picker."""
     # Dialogs can come up a while after the start (Morphe's experimental version notice).
     ctx.ui.dismiss_dialogs()
-    node = ctx.ui.find(rid="mini_player_media_route_button") or ctx.ui.find(rid="media_route_button")
-    if ctx.app == "yt":
-        return Result("info", "visible" if node else "not visible (expected without a Google Cast device)")
-    if not node:
+    # The renderer is found in the background; ask for a search instead of waiting a minute.
+    ctx.control.cmd("rescan")
+    if ctx.control.wait_status(lambda st: st.get("renderers", 0) > 0, 10).get("renderers", 0) == 0:
+        return Result("fail", "renderer not found in the background")
+    node = _find_cast_button(ctx)
+    if not node and ctx.app == "music":
         mini = ctx.ui.find(rid="mini_player_view_pager_item") or ctx.ui.find(rid="mini_player")
         if mini:
             ctx.ui.tap(mini)
-            node = ctx.ui.wait(5, rid="media_route_button")
-    ctx.facts["cast_button"] = node
-    return Result("pass" if node else "fail", "" if node else "no cast button")
+            node = until(lambda: _find_cast_button(ctx), 5)
+    if not node:
+        return Result("fail", "no cast button")
+    evidence = {"button": node.resource_id, "bounds": node.bounds}
+    if ctx.app == "yt":
+        # YouTube's cast button (21.4x: an entry point button, not a MediaRouteButton) opens ours.
+        # The player fades its buttons out after a few seconds: measure again before a second try.
+        opened = None
+        for _ in range(2):
+            ctx.ui.tap(node)
+            opened = ctx.ui.wait(6, contains=ctx.renderer.name)
+            if opened:
+                break
+            node = _find_cast_button(ctx) or node
+        _close_picker(ctx)
+        ctx.control.local("play")
+        if not opened:
+            return Result("fail", "the cast button did not open the DLNA picker", evidence)
+    return Result("pass", node.resource_id, evidence)
+
+
+def _find_cast_button(ctx: Context):
+    """A cast button that is really shown (with all its parents, not faded out), measured in the app."""
+    def shown():
+        for b in ctx.control.cmd("castButtons").get("buttons", []):
+            if b["shown"] and b["width"] > 0 and b["height"] > 0 and b.get("alpha", 1) > 0.5:
+                return Node(b["id"] or b["class"], "", "", (b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]),
+                            enabled=b["enabled"])
+        return None
+    button = shown()
+    if not button and ctx.app == "yt":
+        # The player shows its buttons after a tap on the video and fades them out again,
+        # except while paused.
+        ctx.control.local("pause")
+        time.sleep(1)
+        button = shown()
+        if not button:
+            ctx.phone.tap(540, 300)
+            button = until(shown, 3, interval=0.3)
+    return button
+
+
+def _close_picker(ctx: Context) -> None:
+    """Closes the DLNA picker if it is open (Back without it would minimize YouTube's player)."""
+    if _picker_open(ctx):
+        ctx.phone.key("KEYCODE_BACK")
+        time.sleep(0.5)
+
+
+def _picker_open(ctx: Context) -> bool:
+    return bool(ctx.ui.find(contains=ctx.renderer.name) or ctx.ui.find(contains="by address")
+                or ctx.ui.find(contains="per Adresse"))
+
+
+def cast_button_follows(ctx: Context) -> Result:
+    """The cast button hides when no renderer is reachable and shows again when one is."""
+    unreachable = "http://10.0.2.2:9/description.xml"
+    ctx.control.cmd("setup", device=unreachable)
+    try:
+        ctx.control.cmd("rescan")
+        status = ctx.control.wait_status(lambda st: st.get("renderers", 1) == 0, 12)
+        gone = status.get("renderers", 1) == 0
+        # With Google Cast devices (as the app reports them) the button stays.
+        hidden = status.get("googleCast") or until(lambda: not (ctx.ui.find(rid="mini_player_media_route_button")
+                                                                or ctx.ui.find(rid="media_route_button")), 8)
+    finally:
+        ctx.control.cmd("setup", device=ctx.renderer_device_url)
+    ctx.control.cmd("rescan")
+    back = ctx.control.wait_status(lambda st: st.get("renderers", 0) > 0, 12).get("renderers", 0) > 0
+    shown = until(lambda: ctx.ui.find(rid="mini_player_media_route_button") or ctx.ui.find(rid="media_route_button"), 8)
+    problems = [p for p, bad in [("renderer still listed", not gone), ("button not hidden", not hidden),
+                                 ("renderer not found again", not back), ("button not shown again", not shown)] if bad]
+    return Result("fail" if problems else "pass", ", ".join(problems))
+
+
+#: Title of the apps' own Google Cast dialog (androidx MediaRouter chooser), English and German.
+GOOGLE_CAST_DIALOG = ["Select a device", "Gerät auswählen"]
+
+
+def google_cast_link(ctx: Context) -> Result:
+    """The link to the app's Google Cast dialog in the DLNA picker follows its setting (off by default)."""
+    def open_picker():
+        if ctx.app == "music":
+            button = _find_cast_button(ctx)
+            if button:
+                ctx.ui.tap(button)
+        else:
+            # YouTube: through the share menu, where no cast button is involved.
+            ctx.phone.sh(f"am start -n {ctx.package}/{SHARE_ACTIVITY} -a android.intent.action.SEND "
+                         f"-t text/plain --es android.intent.extra.TEXT 'https://youtu.be/{ctx.video_id}'")
+        return ctx.ui.wait(10, contains=ctx.renderer.name)
+
+    ctx.control.cmd("setup", googleCastLink="false")
+    if not open_picker():
+        return Result("fail", "picker did not open")
+    off = ctx.ui.find(text="Google Cast…")
+    _close_picker(ctx)
+    time.sleep(1)
+    ctx.control.cmd("setup", googleCastLink="true")
+    try:
+        if not open_picker():
+            return Result("fail", "picker did not open with the link on")
+        link = ctx.ui.find(text="Google Cast…")
+        dialog = None
+        if link:
+            ctx.ui.tap(link)
+            # The app's dialog has the same title as ours, but none of our entries.
+            dialog = until(lambda: None if _picker_open(ctx) else
+                           next((t for t in GOOGLE_CAST_DIALOG if ctx.ui.find(contains=t)), None), 15)
+        if dialog:
+            ctx.phone.key("KEYCODE_BACK")
+        else:
+            _close_picker(ctx)
+    finally:
+        ctx.control.cmd("setup", googleCastLink="false")
+    problems = [p for p, bad in [("link shown while off", off), ("link missing while on", not link),
+                                 ("the link did not open the Google Cast dialog", link and not dialog)] if bad]
+    return Result("fail" if problems else "pass", ", ".join(problems) or f"opens \"{dialog}\"")
 
 
 def start_cast(ctx: Context) -> Result:
@@ -144,17 +273,24 @@ def start_cast(ctx: Context) -> Result:
     ctx.logs.wait(rf"Captured videoId={ctx.video_id} ", 30)
     ctx.ui.dismiss_dialogs()
     since = ctx.logs.mark()
+    tapped = {}
     if ctx.app == "music":
-        button = ctx.ui.find(rid="media_route_button") or ctx.ui.find(rid="mini_player_media_route_button")
+        find = lambda: ctx.ui.find(rid="media_route_button") or ctx.ui.find(rid="mini_player_media_route_button")
+        button = find()
         if not button:
             raise Skip("no cast button")
+        # A disabled button ignores taps (the app disables it without Google Cast devices).
+        button = until(lambda: (lambda b: b if b and b.enabled else None)(find()), 5) or find() or button
+        tapped = {"button": button.resource_id, "bounds": button.bounds, "enabled": button.enabled}
         ctx.ui.tap(button)
     else:
         ctx.phone.sh(f"am start -n {ctx.package}/{SHARE_ACTIVITY} -a android.intent.action.SEND "
                      f"-t text/plain --es android.intent.extra.TEXT 'https://youtu.be/{ctx.video_id}'")
     entry = ctx.ui.wait(12, contains=ctx.renderer.name)
     if not entry:
-        return Result("fail", f"picker did not list '{ctx.renderer.name}'")
+        opened = ctx.logs.find_all(r"Could not show DLNA picker", since) or ctx.ui.find(contains="Google Cast")
+        return Result("fail", f"picker did not list '{ctx.renderer.name}'"
+                      + ("" if opened else " (the picker did not open)"), tapped)
     ctx.ui.tap(entry)
     m = ctx.logs.wait(r"Loading (\S+) \(([^)]*)\) \"(.*)\" by \"(.*)\" on", 20, since)
     if not m:
@@ -212,8 +348,9 @@ def renderer_metadata(ctx: Context) -> Result:
         meta["next"] = upcoming
         if not upcoming.get("title"):
             problems.append("next entry without title")
-        elif not upcoming.get("duration"):
-            problems.append("next entry without duration")
+        # The length is known once the app loaded the title, or from the music database for
+        # songs; a plain video further down the queue has none yet.
+        meta["nextDuration"] = upcoming.get("duration") or "unknown"
     detail = ", ".join(problems) or " · ".join(
         v for v in (meta.get("title"), meta.get("artist"), meta.get("album"), meta.get("date"), meta.get("publisher")) if v)
     return Result("fail" if problems else "pass", detail, meta)
@@ -426,9 +563,12 @@ def stop_cast(ctx: Context) -> Result:
     unmuted = ctx.logs.wait(r"Unmuted", 8, since)
     status = ctx.control.status()
     notification = "channel=ytdlna_cast" in ctx.phone.sh("dumpsys notification --noredact")
+    # The proxy closes its port between casts.
+    port_closed = until(lambda: not _listening(ctx, 8720), 6)
     problems = [p for p, bad in [("renderer not stopped", not stopped), ("not unmuted", not unmuted),
                                  ("session still active", status.get("casting")),
-                                 ("cast notification left", notification)] if bad]
+                                 ("cast notification left", notification),
+                                 ("proxy port still open", not port_closed)] if bad]
     return Result("fail" if problems else "pass", ", ".join(problems))
 
 
@@ -573,7 +713,8 @@ def avtransport_next(ctx: Context) -> Result:
         evidence = {"current": current, "next": upcoming}
         if not upcoming.get("uri"):
             return Result("fail", "no next title on the renderer", evidence)
-        problems = [f"next title without {name}" for name in ("title", "duration") if not upcoming.get(name)]
+        # The length is known for songs (music database) or titles the app loaded already.
+        problems = [] if upcoming.get("title") else ["next title without title"]
         # Near the end the renderer moves on to the next title by itself; the phone follows.
         since = ctx.logs.mark()
         duration = current.get("duration", "")
@@ -591,7 +732,8 @@ def avtransport_next(ctx: Context) -> Result:
         problems += [p for p, bad in [("renderer did not move on", not moved), ("phone did not follow", not followed),
                                       ("renderer not playing the next title", not (playing and title))] if bad]
         return Result("fail" if problems else "pass",
-                      ", ".join(problems) or f"next: {upcoming.get('title')} ({upcoming.get('duration')})", evidence)
+                      ", ".join(problems) or f"next: {upcoming.get('title')} ({upcoming.get('duration') or 'length unknown'})",
+                      evidence)
     finally:
         ctx.renderer.use_openhome = True
         ctx.control.cmd("setup", avTransportOnly="false")
@@ -599,6 +741,16 @@ def avtransport_next(ctx: Context) -> Result:
             ctx.control.cmd("stop")
         except Exception:
             pass
+
+
+def _listening(ctx: Context, port: int) -> bool:
+    """Whether something on the phone listens on {port} (state 0A in /proc/net/tcp)."""
+    suffix = f":{port:04X}"
+    for line in ctx.phone.sh("cat /proc/net/tcp /proc/net/tcp6").splitlines():
+        fields = line.split()
+        if len(fields) > 3 and fields[1].endswith(suffix) and fields[3] == "0A":
+            return True
+    return False
 
 
 def no_crash(ctx: Context) -> Result:
@@ -623,6 +775,8 @@ SCENARIOS = [
     ("stream_capture", stream_capture, {"yt", "music"}),
     ("video_id_hook", video_id_hook, {"yt", "music"}),
     ("cast_button", cast_button, {"yt", "music"}),
+    ("cast_button_follows", cast_button_follows, {"music"}),
+    ("google_cast_link", google_cast_link, {"yt", "music"}),
     ("start_cast", start_cast, {"yt", "music"}),
     ("renderer_plays", renderer_plays, {"yt", "music"}),
     ("renderer_metadata", renderer_metadata, {"yt", "music"}),
