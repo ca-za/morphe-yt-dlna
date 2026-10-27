@@ -91,7 +91,7 @@ public final class StreamCapture {
             byte[] audioOnly = LocalPlayback.audioOnly(bytes);
             if (audioOnly == null) return streamingData;
             Object replacement = LocalPlayback.toProto(streamingData, audioOnly);
-            Log.d("Local player gets audio only (" + bytes.length + " -> " + audioOnly.length + " bytes)");
+            Log.d("Local player gets the smallest tracks only (" + bytes.length + " -> " + audioOnly.length + " bytes)");
             return replacement;
         } catch (Throwable t) {
             Log.e("Could not reduce local playback", t);

@@ -6,9 +6,11 @@ import java.nio.ByteBuffer;
 import java.util.List;
 
 /**
- * While casting, the app's own player only gets the smallest audio track: it keeps running as
- * the remote control (timeline, queue, autoplay) without downloading or decoding any video.
- * The renderer still gets every format, from the copy {@link StreamCapture} keeps.
+ * While casting, the app's own player only gets the smallest audio track and the smallest video
+ * track (144p): it keeps running as the remote control (timeline, queue, autoplay) while
+ * downloading and decoding next to nothing. One video track is kept so the app still offers video,
+ * for example YouTube Music's song/video switch. The renderer still gets every format, from the
+ * copy {@link StreamCapture} keeps.
  */
 final class LocalPlayback {
     private static final int SD_FORMATS = 2;
@@ -19,11 +21,13 @@ final class LocalPlayback {
     private LocalPlayback() {
     }
 
-    /** Streaming data without video and with only the smallest audio track. Null if not applicable. */
+    /** Streaming data with only the smallest audio and video track. Null if not applicable. */
     static byte[] audioOnly(byte[] streamingData) {
         List<Proto.Field> fields = Proto.parse(streamingData);
         Proto.Field smallestAudio = null;
         long smallestBitrate = Long.MAX_VALUE;
+        Proto.Field smallestVideo = null;
+        long smallestVideoBitrate = Long.MAX_VALUE;
         boolean hasVideo = false;
         for (Proto.Field field : fields) {
             if (field.number == SD_FORMATS) {
@@ -33,6 +37,11 @@ final class LocalPlayback {
                 String mime = Proto.string(format, F_MIME_TYPE);
                 if (mime.startsWith("video/")) {
                     hasVideo = true;
+                    long bitrate = Proto.varint(format, F_BITRATE);
+                    if (bitrate > 0 && bitrate < smallestVideoBitrate) {
+                        smallestVideoBitrate = bitrate;
+                        smallestVideo = field;
+                    }
                 } else if (mime.startsWith("audio/")) {
                     long bitrate = Proto.varint(format, F_BITRATE);
                     if (bitrate > 0 && bitrate < smallestBitrate) {
@@ -47,7 +56,7 @@ final class LocalPlayback {
         int kept = 0;
         for (Proto.Field field : fields) {
             boolean format = field.number == SD_FORMATS || field.number == SD_ADAPTIVE_FORMATS;
-            if (format && field != smallestAudio) continue;
+            if (format && field != smallestAudio && field != smallestVideo) continue;
             out.write(streamingData, field.start, field.end - field.start);
             if (format) kept++;
         }
