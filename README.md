@@ -1,18 +1,46 @@
-# 👋🧩 Morphe Patches template
+# YT DLNA Patches
 
-Template repository for Morphe Patches.
+Cast YouTube and YouTube Music to DLNA / UPnP renderers (TVs, receivers, media players), as an
+add-on to the official [Morphe](https://morphe.software) patches.
 
-## ❓ About
+## Features
 
-Patches for apps I like.
+- **Cast button**: shows when a DLNA renderer is found on the network, opens a device picker
+  like the apps' own cast dialog. Also from the share menu ("Stream to DLNA device").
+- **Phone as remote**: play, pause, seek, next and volume keys on the phone control the TV, and
+  the phone follows changes made on the TV. The phone stays silent and plays only the smallest
+  streams while casting.
+- **Formats**: DASH up to 4K, HLS up to 1080p for renderers without DASH, live streams as HLS.
+- **Metadata**: title, artist (channel), cover, and in YouTube Music album, year and label from
+  Deezer or iTunes. The OpenHome playlist or SetNextAVTransportURI gives the TV the next title.
+- **YouTube Music**: song and video mode reach the TV.
 
-<!-- TODO: Update this about section with a brief introduction/summary about this repo and what it offers. -->
+## Install
 
-### How to use these patches
+1. Add this source to Morphe Manager:
+   https://morphe.software/add-source?github=ca-za/morphe-yt-dlna
+2. Patch YouTube or YouTube Music with the official Morphe patches **and** "DLNA cast". The patch
+   is an add-on and refuses to patch without the official patches (including GmsCore support).
+3. To see the cast button, turn off Morphe's "Hide cast button" (on by default; YouTube:
+   Player, YouTube Music: General). Casting from the share menu works either way.
 
-Click here to add these patches to Morphe: https://morphe.software/add-source?github=xyz-user/xyz-patches
+## Settings
 
-## 🩹 Patches list
+In Morphe's settings, under Player:
+
+- **DLNA: Google Cast in the device list** (both apps, off): shows "Google Cast…" in the
+  picker, leading to the app's own cast dialog.
+- **DLNA: Album covers from music databases** (YouTube Music, on): looks up album covers and
+  details on Deezer or iTunes; title and artist are sent to these services.
+
+## How it works and what leaves the phone
+
+- The video streams are bound to the phone, so the phone serves them to the renderer through a
+  small built-in proxy (Rust, port 8720 on the local network, open only while casting).
+- Renderers are searched with SSDP while the app is in the foreground (once a minute).
+- Requests to the renderer carry the phone's device name and the app (UPnP control point
+  headers), so a renderer can show who is casting.
+- With album covers on, YouTube Music sends title and artist to Deezer / iTunes.
 
 <!-- PATCHES_START EXPANDED -->
 
@@ -23,69 +51,17 @@ Click here to add these patches to Morphe: https://morphe.software/add-source?gi
      If you wish to manually keep this list updated then remove the PATCHES_START and PATCHES_END 
      comment blocks entirely. -->
 
-#### A list of your patches will automatically be shown here after your first patches release is created.
+## Patches
 
-&nbsp;
+The list is filled in by the release workflow.
 
-## 🚀 Getting development started
-
-To start using this template, follow these steps:
-
-1. [Setup](https://github.com/MorpheApp/morphe-documentation/blob/main/docs/morphe-development/README.md) your development environment including adding a GitHub PAT as described [here](https://github.com/MorpheApp/morphe-patcher/blob/main/docs/2_1_setup.md#-prepare-the-environment).
-2. [Create a new repository using this template](https://github.com/new?template_name=morphe-patches-template&template_owner=MorpheApp). Select create a new repository, and **enable 'Include all branches'** 
-3. Enable "Allow GitHub Actions to create and approve pull requests" in your repo Settings > Actions > General > Workflow permissions
-4. Update the [build.gradle.kts](patches/build.gradle.kts) file (Specifically, the 
-   [group of the project](patches/build.gradle.kts#L1), and the [About](patches/build.gradle.kts#L6-L11))
-5. Update the [README.md](README.md) file to be specific of your repo, and update the links in the [issue templates](.github/ISSUE_TEMPLATE).
-6. Choose a name for your patches project. Keep in mind you must use a name that does not 
-   imply authorship by the Morphe open source project. If unsure, then simply name these
-   patches after yourself ("UserXYZ Morphe patches"). See the [NOTICE](NOTICE) for details. 
-7. (Optional): Add `patches-bundle.png` to the project if you want a custom icon to show in
-   Morphe Manager instead of your GitHub profile avatar.
-
-🎉 You are now ready to start creating patches!
-
-## 🧑‍💻 Dev usage
-
-To develop and release your Patches using this template:
-
-- **Make all changes to the `dev` branch.**
-- For local development work build your patches using the gradle task `./gradlew buildAndroid` to generate the mpp file found in `patches/build/libs/patches-*.mpp`. Apply your patches locally using Morphe Desktop tool like any other patch bundle.
-- Always use [Semantic commit](https://kapeli.com/cheat_sheets/Semantic_Commits.docset/Contents/Resources/Documents/index) messages for commits. To keep it simple use only 3 commit message types: 
-  - `feat: Added a new feature`
-  - `fix: Some problem now fixed`
-  - `chore: Random change you do not want in the user facing changelog`
-- Commits of `fix:` and `feat:` will automatically generate new pre-releases and `chore:` will not create a new release.
-- Users can apply your dev branch releases by enabling `pre-release` in Morphe Manager patch sources.
-- When your dev branch is ready, and you want a stable release, merge dev branch to main (do not squash, and only merge).
-- **Always use semantic release (release.yml)**. Do not manually upload or create releases by hand
-  because many files must be updated and release.yml handles everything.
-
-## 🤓 Tips
-- See the [patcher documentation](https://github.com/MorpheApp/morphe-patcher/blob/main/docs/1_patcher_intro.md) for more examples of creating patches and fingerprints.
-- Do not use AI to create new release scripts. The `release.yml` here already handles everything.
-  If you need something custom with your releases then modify the existing `release.yml`
-  and `.releaserc` instead of writing everything new from scratch.
-- Do not manually edit or manually commit any generated files such as: `patches-list.json`,
-  `patches-bundle.json`, `CHANGELOG.md`.  These files will be automatically updated by `release.yml`.
-- Do not force push any semantic release commits as that will break all future releases.
-  If you need to fix a broken release, it's always easiest to create a new release instead of 
-  fixing an existing release.
-
-
-<!-- The patches end tag is intentionally placed here so the first release will clean up 
-     this readme of all developer instructions above. -->
 <!-- PATCHES_END -->
 
-### 🛠️ Building locally
+## Development
 
-- Run `./gradlew buildAndroid`
-- The built patches .mpp file is found in `patches/build/libs/patches-*.mpp`
-- Patch the mpp file using [Morphe-Desktop](https://github.com/MorpheApp/morphe-desktop)
-  like any other patch bundle.
+- `./gradlew :patches:buildAndroid` builds the patch bundle (needs Rust with the Android targets
+  and the Android NDK, see `native/build-android.sh`).
+- `tests/regression/run.py` runs the end-to-end regression tests on emulators, see
+  [tests/regression/README.md](tests/regression/README.md).
 
-See the [Morphe documentation](https://github.com/MorpheApp/morphe-documentation) for more information.
-
-## 📜 License
-
-UserXYZ Patches are licensed under the [GNU General Public License v3.0](LICENSE)
+This project is not affiliated with Google, YouTube or the Morphe project.

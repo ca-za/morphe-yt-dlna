@@ -1,7 +1,6 @@
 group = "app.ytdlna"
 
 patches {
-    // TODO: Update this section with your project details.
     about {
         name = "YT DLNA Patches"
         description = "DLNA casting for YouTube and YouTube Music"
