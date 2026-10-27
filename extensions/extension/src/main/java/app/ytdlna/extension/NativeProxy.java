@@ -96,6 +96,12 @@ final class NativeProxy {
     static native void nativeSetUserAgent(String userAgent);
 
     /**
+     * One format of a live stream under the directory {@code path}: {@code index.m3u8} (the
+     * newest segments), {@code init.mp4} and {@code <sq>.m4s}, from the format's {@code url}.
+     */
+    static native void nativePutLiveTrack(String path, String url, String mimeType);
+
+    /**
      * HLS media playlist at {@code path} over the stream {@code uri} (relative to it), built
      * from the segment index at {@code indexStart..indexEnd} of {@code url} when first requested.
      */

@@ -18,6 +18,8 @@ import java.util.List;
  *   <li>{@code /v/<videoId>/master.m3u8} - the same as HLS (H.264/AAC), for renderers without DASH;
  *   {@code <formatIndex>.m3u8} are its media playlists, built by the proxy from the segment index.</li>
  *   <li>{@code /v/<videoId>/<formatIndex>.<ext>} - one format, proxied with Range support.</li>
+ *   <li>{@code /v/<videoId>/live.m3u8} - a live stream as HLS; {@code L<formatIndex>/} hold the
+ *   playlist and segments of each live format, built by the proxy from the newest segment.</li>
  *   <li>{@code /v/<videoId>/auto} - the media chosen for the renderer (OpenHome playlist entries).</li>
  * </ul>
  * The YouTube stream URLs are bound to the phone, so the renderer can not use them directly.
@@ -76,6 +78,12 @@ final class StreamProxy {
         if (dash(info) != null) {
             NativeProxy.nativePutText(prefix + "manifest.mpd", "application/dash+xml", manifest(info));
         }
+        if (info.isLive() && live(info) != null) {
+            for (StreamInfo.Format f : liveTracks(info)) {
+                NativeProxy.nativePutLiveTrack(prefix + "L" + info.formats.indexOf(f), f.url, f.container());
+            }
+            NativeProxy.nativePutText(prefix + "live.m3u8", HLS_MIME, liveMaster(info));
+        }
         if (hls(info) != null) {
             NativeProxy.nativePutText(prefix + "master.m3u8", HLS_MIME, hlsMaster(info));
             for (StreamInfo.Format f : hlsTracks(info)) {
@@ -96,6 +104,11 @@ final class StreamProxy {
             NativeProxy.nativePutText(path, media.mimeType, manifest(info));
             return;
         }
+        if (media.path.endsWith("/live.m3u8")) {
+            // Its tracks are found relative to the path, next to it.
+            NativeProxy.nativePutText(path, media.mimeType, liveMaster(info));
+            return;
+        }
         if (media.mimeType.equals(HLS_MIME)) {
             // Its media playlists are found relative to the path, next to the master.
             NativeProxy.nativePutText(path, media.mimeType, hlsMaster(info));
@@ -113,6 +126,8 @@ final class StreamProxy {
      * without DASH) or a muxed file (at most 360p).
      */
     static Media choose(StreamInfo info, DlnaDevice device, boolean audioOnly) {
+        // Live streams are served as HLS only.
+        if (info.isLive()) return supportsHls(device) ? live(info) : null;
         if (audioOnly) return audio(info);
         Media media = null;
         if (preferHls && supportsHls(device)) media = hls(info);
@@ -133,6 +148,45 @@ final class StreamProxy {
             if (device.supports(mime)) return true;
         }
         return false;
+    }
+
+    /** A live stream as HLS from its H.264 and AAC live formats. Null if it lacks them. */
+    static Media live(StreamInfo info) {
+        List<StreamInfo.Format> tracks = liveTracks(info);
+        if (tracks.size() < 2) return null;
+        return new Media("/v/" + info.videoId + "/live.m3u8", HLS_MIME, true, "Live HLS " + tracks.get(0).height + "p");
+    }
+
+    /** Live video formats (H.264 up to 1080p), best first, then the AAC audio; empty if one is missing. */
+    private static List<StreamInfo.Format> liveTracks(StreamInfo info) {
+        List<StreamInfo.Format> tracks = new ArrayList<>();
+        StreamInfo.Format audio = null;
+        for (StreamInfo.Format f : info.formats) {
+            if (!f.hasUrl() || !f.adaptive || !f.container().endsWith("mp4")) continue;
+            if (f.isVideoOnly() && f.codecs().startsWith("avc1") && f.height <= MAX_VIDEO_HEIGHT) tracks.add(f);
+            if (f.isAudioOnly() && f.codecs().startsWith("mp4a") && (audio == null || f.bitrate > audio.bitrate)) audio = f;
+        }
+        if (tracks.isEmpty() || audio == null) return new ArrayList<>();
+        tracks.sort(Comparator.comparingInt((StreamInfo.Format f) -> f.height).reversed());
+        tracks.add(audio);
+        return tracks;
+    }
+
+    /** Master playlist of a live stream: one variant per video format, all with the same audio. */
+    static String liveMaster(StreamInfo info) {
+        List<StreamInfo.Format> tracks = liveTracks(info);
+        StreamInfo.Format audio = tracks.remove(tracks.size() - 1);
+        StringBuilder m3u8 = new StringBuilder("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n");
+        m3u8.append("#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"L")
+                .append(info.formats.indexOf(audio)).append("/index.m3u8\"\n");
+        for (StreamInfo.Format video : tracks) {
+            m3u8.append("#EXT-X-STREAM-INF:BANDWIDTH=").append(video.bitrate + audio.bitrate)
+                    .append(",CODECS=\"").append(video.codecs()).append(',').append(audio.codecs()).append('"')
+                    .append(",RESOLUTION=").append(video.width).append('x').append(video.height)
+                    .append(",AUDIO=\"audio\"\n")
+                    .append('L').append(info.formats.indexOf(video)).append("/index.m3u8\n");
+        }
+        return m3u8.toString();
     }
 
     /** HLS with H.264 video (up to 1080p) and AAC audio. Null if the video lacks them. */

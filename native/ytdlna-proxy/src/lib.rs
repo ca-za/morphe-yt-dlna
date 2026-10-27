@@ -8,11 +8,13 @@
 //! - keeps upstream connections to YouTube alive and reuses them (no TLS handshake per segment),
 //! - supports keep-alive towards the renderer,
 //! - fetches large ranges in chunks with a read-ahead buffer and retries failed chunks,
-//! - builds HLS playlists from the streams' segment index, for renderers without DASH.
+//! - builds HLS playlists from the streams' segment index, for renderers without DASH,
+//! - serves live streams as HLS, built from the live formats the app received.
 
 pub mod events;
 pub mod hls;
 pub mod http;
+pub mod live;
 pub mod log;
 pub mod registry;
 pub mod server;

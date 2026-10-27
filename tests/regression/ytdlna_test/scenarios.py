@@ -9,6 +9,7 @@ Status values:
   skip  - not applicable, or a precondition failed
 """
 
+import os
 import re
 import time
 import urllib.request
@@ -53,7 +54,8 @@ class Context:
 
     @property
     def video_id(self) -> str:
-        return TEST_VIDEO[self.app][0]
+        # A scenario may switch to another video (the live stream).
+        return self.facts.get("video_id") or TEST_VIDEO[self.app][0]
 
 
 def until(fn, timeout: float, interval: float = 0.5):
@@ -483,6 +485,76 @@ def _http(url: str) -> str:
         return f"ERROR {e}"
 
 
+#: A 24/7 live stream (Lofi Girl's synthwave radio). Override with YTDLNA_LIVE_VIDEO if it ends.
+LIVE_VIDEO = os.environ.get("YTDLNA_LIVE_VIDEO", "4xDzrJKXOOY")
+
+
+def live_hls(ctx: Context) -> Result:
+    """Live streams play on the TV as HLS, with every playlist and segment fetched through the phone."""
+    since = ctx.logs.mark()
+    ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'vnd.youtube:{LIVE_VIDEO}' -p {ctx.package}")
+    captured = ctx.logs.wait(rf"Captured videoId={LIVE_VIDEO} .*", 40, since)
+    if not captured:
+        return Result("env", f"live video {LIVE_VIDEO} did not load")
+    if " live " not in captured.group(0) + " ":
+        return Result("env", f"{LIVE_VIDEO} is not live right now (set YTDLNA_LIVE_VIDEO)")
+    ctx.facts["video_id"] = LIVE_VIDEO
+    ctx.facts.pop("title", None)
+    try:
+        started = start_cast(ctx)
+        if started.status != "pass":
+            return Result("fail", f"cast start: {started.detail}")
+        evidence = {"format": started.detail}
+        if "Live HLS" not in started.detail:
+            return Result("fail", f"not cast as live HLS ({started.detail})", evidence)
+        base = f"http://127.0.0.1:8720/v/{LIVE_VIDEO}/"
+        master = _http(base + "live.m3u8")
+        variants = re.findall(r"^(L\d+/index\.m3u8)$", master, re.M)
+        media = _http(base + variants[0]) if variants else ""
+        segments = re.findall(r"^(\d+)\.m4s$", media, re.M)
+        track = variants[0].split("/")[0] if variants else ""
+        segment = _http_bytes(f"{base}{track}/{segments[-2]}.m4s") if len(segments) > 1 else b""
+        init = _http_bytes(f"{base}{track}/init.mp4") if track else b""
+        evidence.update({"variants": len(variants), "segments": len(segments), "segmentBytes": len(segment),
+                         "segmentStarts": segment[4:8].decode("latin-1"), "init": init[4:8].decode("latin-1"),
+                         "master": master[:300], "media": media[:300]})
+        problems = []
+        if not variants:
+            problems.append("live playlist without variants")
+        if "googlevideo.com" in master + media:
+            problems.append("playlist points to YouTube")
+        if not segments:
+            problems.append("variant playlist without segments")
+        elif segment[4:8] in (b"ftyp", b"moov") or len(segment) < 1000:
+            problems.append("segment not served (or with its init section)")
+        if init[4:8] != b"ftyp":
+            problems.append("no init section")
+        if not renderer_state_is(ctx, "PLAYING", 40):
+            problems.append(f"renderer state {ctx.renderer.state()}")
+        else:
+            p1 = ctx.renderer.position_ms()
+            p2 = until(lambda: (lambda p: p if p >= p1 + 3000 else None)(ctx.renderer.position_ms()), 20)
+            evidence["positions"] = [p1, p2]
+            if not p2:
+                problems.append("renderer position does not advance")
+        return Result("fail" if problems else "pass", ", ".join(problems) or
+                      f"{started.detail.split(',')[0]}, {len(variants)} variants, window of {len(segments)} segments",
+                      evidence)
+    finally:
+        ctx.facts.pop("video_id", None)
+        try:
+            ctx.control.cmd("stop")
+        except Exception:
+            pass
+
+
+def _http_bytes(url: str) -> bytes:
+    try:
+        return urllib.request.urlopen(url, timeout=30).read()
+    except Exception:
+        return b""
+
+
 def avtransport_next(ctx: Context) -> Result:
     """Renderers without OpenHome get the next title (SetNextAVTransportURI) and the phone follows."""
     ctx.control.cmd("setup", avTransportOnly="true")
@@ -569,6 +641,7 @@ SCENARIOS = [
     ("screen_lock", screen_lock, {"yt", "music"}),
     ("stop_cast", stop_cast, {"yt", "music"}),
     ("hls_playback", hls_playback, {"yt"}),
+    ("live_hls", live_hls, {"yt"}),
     ("avtransport_next", avtransport_next, {"music"}),
     ("no_crash", no_crash, {"yt", "music"}),
 ]

@@ -71,6 +71,9 @@ final class StreamInfo {
     private static final int R_START = 3;
     private static final int R_END = 4;
 
+    /** StreamingData: HLS playlist (hls_variant) of live streams. */
+    private static final int SD_HLS_MANIFEST = 5;
+
     // VideoDetails field numbers.
     private static final int VD_VIDEO_ID = 1;
     private static final int VD_TITLE = 15;
@@ -87,6 +90,8 @@ final class StreamInfo {
     long lengthSeconds;
     /** Name of the uploading channel. */
     String channel = "";
+    /** YouTube's HLS playlist of a live stream, "" for other videos. */
+    String hlsManifestUrl = "";
     /** Largest thumbnail of the video, "" if none. */
     String thumbnailUrl = "";
     final List<Format> formats = new ArrayList<>();
@@ -130,6 +135,8 @@ final class StreamInfo {
         for (Proto.Field f : Proto.parse(streamingData)) {
             if ((f.number == SD_FORMATS || f.number == SD_ADAPTIVE_FORMATS) && f.wireType == Proto.BYTES) {
                 info.formats.add(parseFormat(f.data, f.number == SD_ADAPTIVE_FORMATS));
+            } else if (f.number == SD_HLS_MANIFEST && f.wireType == Proto.BYTES) {
+                info.hlsManifestUrl = f.string();
             }
         }
         return info;
@@ -161,6 +168,11 @@ final class StreamInfo {
         return format;
     }
 
+    /** A live stream: it has an HLS playlist and no fixed length. */
+    boolean isLive() {
+        return hlsManifestUrl.startsWith("https://") && lengthSeconds == 0;
+    }
+
     String summary() {
         int withUrl = 0, audio = 0, video = 0;
         for (Format f : formats) {
@@ -170,6 +182,7 @@ final class StreamInfo {
             else if (f.isVideoOnly()) video++;
         }
         return "videoId=" + videoId + " title=\"" + title + "\" channel=\"" + channel + "\" length=" + lengthSeconds + "s"
+                + (isLive() ? " live" : "")
                 + " formats=" + formats.size() + " withUrl=" + withUrl
                 + " audioWithUrl=" + audio + " videoWithUrl=" + video;
     }

@@ -151,7 +151,7 @@ final class AvTransportRenderer extends Renderer {
         String uri = autoUri(next.videoId);
         try {
             DlnaController.setNext(device, uri,
-                    DlnaController.didl(uri, autoMime(), track, art, !audioOnly.getAsBoolean()));
+                    DlnaController.didl(uri, autoMime(next.videoId), track, art, !audioOnly.getAsBoolean()));
             nextVideoId = next.videoId;
             nextUri = uri;
             announced.add(next.videoId);

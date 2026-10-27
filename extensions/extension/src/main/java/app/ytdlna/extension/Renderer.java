@@ -161,7 +161,15 @@ abstract class Renderer {
         return "/v/" + videoId + "/auto";
     }
 
-    /** Media type of {@link #autoUri} addresses, as the streams will be served. */
+    /** Media type of a title's {@link #autoUri}: the chosen media's if its streams are known. */
+    String autoMime(String videoId) {
+        StreamInfo captured = StreamCapture.get(videoId);
+        StreamProxy.Media media = captured == null ? null
+                : StreamProxy.choose(captured, device, audioOnly.getAsBoolean());
+        return media != null ? media.mimeType : autoMime();
+    }
+
+    /** Media type of {@link #autoUri} addresses before the streams are known. */
     String autoMime() {
         if (audioOnly.getAsBoolean()) return "audio/mp4";
         return StreamProxy.videoMime(device);

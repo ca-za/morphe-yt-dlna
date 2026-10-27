@@ -11,6 +11,15 @@ pub enum Entry {
     Stream(Stream),
     /// An HLS media playlist over one stream, built from its segment index on first request.
     Hls(HlsMedia),
+    /// One format of a live stream: `<path>/index.m3u8`, `<path>/init.mp4`, `<path>/<sq>.m4s`.
+    LiveTrack(LiveTrack),
+}
+
+pub struct LiveTrack {
+    pub url: String,
+    pub mime: String,
+    /// The init section (ftyp + moov), once read.
+    pub init: Mutex<Option<Arc<Vec<u8>>>>,
 }
 
 pub struct HlsMedia {
@@ -85,6 +94,10 @@ pub fn put_hls(path: String, uri: String, url: String, init_end: u64, index_star
             playlist: Mutex::new(None),
         }),
     );
+}
+
+pub fn put_live_track(path: String, url: String, mime: String) {
+    insert(path, Entry::LiveTrack(LiveTrack { url, mime, init: Mutex::new(None) }));
 }
 
 pub fn remove_prefix(prefix: &str) {

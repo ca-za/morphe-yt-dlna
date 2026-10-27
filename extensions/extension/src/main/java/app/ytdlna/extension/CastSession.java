@@ -99,6 +99,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private float lastSpeed;
     private long lastQueueItemId = -1;
     private volatile long ignorePositionUntil;
+    /** The loaded title is a live stream. */
+    private volatile boolean live;
     /** Pauses before this are the player's reaction to our correction seek, not the user's. */
     private volatile long seekPauseUntil;
     /** A correction seek is settling (main thread only). */
@@ -202,7 +204,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         int newState = state.getState();
         long now = SystemClock.elapsedRealtime();
 
-        if (lastState != -1 && now > ignorePositionUntil && loadedVideoId != null
+        if (!live && lastState != -1 && now > ignorePositionUntil && loadedVideoId != null
                 && loadedVideoId.equals(StreamCapture.currentVideoId())) {
             long expected = lastPosition;
             if (lastState == PlaybackState.STATE_PLAYING) {
@@ -333,9 +335,13 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 if (stopped || r == null) return;
                 StreamProxy.Media media = StreamProxy.choose(info, device, audioOnly());
                 if (media == null) {
-                    toast(DlnaCast.t("Kein passendes Format für dieses Gerät", "No suitable format for this device"));
+                    toast(info.isLive()
+                            ? DlnaCast.t("Livestreams braucht ein Gerät mit HLS", "Live streams need a device with HLS")
+                            : DlnaCast.t("Kein passendes Format für dieses Gerät", "No suitable format for this device"));
                     return;
                 }
+                // Live: no common timeline of phone and renderer, so positions are not synced.
+                live = info.isLive();
                 StreamProxy.register(info);
                 // Read the queue first: its entry has the artist when the media session has none yet.
                 List<LocalPlayer.QueueEntry> queue = local.queue();
@@ -358,7 +364,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
 
                 // Continue where the phone is.
                 long position = local.positionOf(info.videoId);
-                if (position > SEEK_THRESHOLD_MS) {
+                if (!live && position > SEEK_THRESHOLD_MS) {
                     r.seek(position, local.stateCode() == PlaybackState.STATE_NONE || local.isPlaying());
                 }
                 // The phone reports "paused" for a moment while switching titles, so only
@@ -552,7 +558,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             Log.i("Phone paused on its own while the renderer plays, resuming it");
             local.play();
         }
-        if (!"PLAYING".equals(rendererState) && !rendererState.isEmpty()) return;
+        if (live || !"PLAYING".equals(rendererState) && !rendererState.isEmpty()) return;
         rendererThread.execute(() -> {
             try {
                 if (loadedVideoId == null || !loadedVideoId.equals(StreamCapture.currentVideoId())) return;

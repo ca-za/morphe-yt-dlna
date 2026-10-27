@@ -76,6 +76,20 @@ pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativePutText(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativePutLiveTrack(
+    mut env: JNIEnv,
+    _class: JClass,
+    path: JString,
+    url: JString,
+    mime: JString,
+) {
+    let path = string(&mut env, &path);
+    let url = string(&mut env, &url);
+    let mime = string(&mut env, &mime);
+    guarded((), || registry::put_live_track(path, url, mime));
+}
+
+#[no_mangle]
 pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativePutHls(
     mut env: JNIEnv,
     _class: JClass,

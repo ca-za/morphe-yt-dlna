@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::events;
 use crate::hls;
+use crate::live;
 use crate::http::{self, RangeResult, Request};
 use crate::registry::{self, Entry, Stream};
 use crate::upstream;
@@ -105,6 +106,14 @@ fn respond<W: Write>(request: &Request, out: &mut W) -> io::Result<bool> {
             return Ok(false);
         }
     };
+    // Files of a live track: the entry is registered for their directory.
+    if let Some((dir, leaf)) = request.path.rsplit_once('/') {
+        if let Some(entry) = registry::get(dir) {
+            if let Entry::LiveTrack(track) = entry.as_ref() {
+                return serve_live(track, leaf, request, head_only, out);
+            }
+        }
+    }
     let entry = match registry::get(&request.path) {
         Some(entry) => Some(entry),
         None => wait_for_lazy_entry(&request.path),
@@ -116,6 +125,10 @@ fn respond<W: Write>(request: &Request, out: &mut W) -> io::Result<bool> {
     match entry.as_ref() {
         Entry::Text { mime, body } => write_text(out, mime, body, request, head_only),
         Entry::Stream(stream) => serve_stream(stream, request, head_only, out),
+        Entry::LiveTrack(_) => {
+            http::write_head(out, 404, &[("Content-Length", "0".into())], request.keep_alive)?;
+            Ok(request.keep_alive)
+        }
         Entry::Hls(media) => match hls_playlist(media) {
             Ok(body) => write_text(out, "application/vnd.apple.mpegurl", &body, request, head_only),
             Err(e) => {
@@ -124,6 +137,51 @@ fn respond<W: Write>(request: &Request, out: &mut W) -> io::Result<bool> {
                 Ok(false)
             }
         },
+    }
+}
+
+/// The media playlist, init section or a segment of a live track.
+fn serve_live<W: Write>(
+    track: &registry::LiveTrack,
+    leaf: &str,
+    request: &Request,
+    head_only: bool,
+    out: &mut W,
+) -> io::Result<bool> {
+    let result = match leaf {
+        "index.m3u8" => live::head(&track.url).map(|head| {
+            *track.init.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::sync::Arc::new(head.init.clone()));
+            ("application/vnd.apple.mpegurl", live::media_playlist(&head).into_bytes())
+        }),
+        "init.mp4" => {
+            let cached = track.init.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            match cached {
+                Some(init) => Ok((track.mime.as_str(), init.to_vec())),
+                None => live::head(&track.url).map(|head| (track.mime.as_str(), head.init)),
+            }
+        }
+        _ => match leaf.strip_suffix(".m4s").and_then(|n| n.parse::<u64>().ok()) {
+            Some(sequence) => live::segment(&track.url, sequence).map(|data| (track.mime.as_str(), data)),
+            None => {
+                http::write_head(out, 404, &[("Content-Length", "0".into())], request.keep_alive)?;
+                return Ok(request.keep_alive);
+            }
+        },
+    };
+    match result {
+        Ok((mime, body)) => {
+            http::write_head(out, 200, &[("Content-Type", mime.to_string()), ("Content-Length", body.len().to_string())],
+                             request.keep_alive)?;
+            if !head_only {
+                out.write_all(&body)?;
+            }
+            Ok(request.keep_alive)
+        }
+        Err(e) => {
+            crate::info!("Live {leaf} failed: {e}");
+            http::write_head(out, 502, &[("Content-Length", "0".into())], false)?;
+            Ok(false)
+        }
     }
 }
 

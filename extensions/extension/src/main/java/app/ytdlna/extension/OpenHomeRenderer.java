@@ -221,7 +221,9 @@ final class OpenHomeRenderer extends Renderer {
     private int insert(int afterId, Track track, String art) throws Exception {
         String uri = autoUri(track.videoId);
         boolean audio = audioOnly.getAsBoolean();
-        int id = OpenHome.insert(device, afterId, uri, DlnaController.didl(uri, autoMime(), track, art, !audio));
+        // The media type tells the renderer how to read the address (DASH, HLS or a file).
+        String mime = autoMime(track.videoId);
+        int id = OpenHome.insert(device, afterId, uri, DlnaController.didl(uri, mime, track, art, !audio));
         trackIdByVideo.put(track.videoId, id);
         videoByTrackId.put(id, track.videoId);
         return id;
