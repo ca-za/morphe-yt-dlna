@@ -31,6 +31,13 @@ final class CastSession implements StreamCapture.Listener {
     private static final long SEEK_THRESHOLD_MS = 3000;
     /** After loading a video, position changes are ignored for this long. */
     private static final long LOAD_SETTLE_MS = 2500;
+    /** Renderer state events right after our own commands are their echo, not user actions. */
+    private static final long RENDERER_ECHO_MS = 1500;
+    private static final long RENDERER_LOAD_SETTLE_MS = 5000;
+    /** Larger differences between phone and renderer position are corrected on the phone. */
+    private static final long DRIFT_THRESHOLD_MS = 4000;
+    private static final long SYNC_INTERVAL_MS = 10_000;
+    private static final long POLL_INTERVAL_MS = 2000;
 
     private static CastSession active;
 
@@ -75,6 +82,11 @@ final class CastSession implements StreamCapture.Listener {
     private float lastSpeed;
     private long ignorePositionUntil;
 
+    // Renderer side.
+    private volatile String avTransportToken;
+    private volatile String rendererState = "";
+    private volatile long ignoreRendererUntil;
+
     private final MediaController.Callback callback = new MediaController.Callback() {
         @Override
         public void onPlaybackStateChanged(PlaybackState state) {
@@ -111,6 +123,7 @@ final class CastSession implements StreamCapture.Listener {
                 int port = StreamProxy.start(context);
                 String host = streamHost.isEmpty() ? StreamProxy.localAddressFor(device) : streamHost;
                 baseUrl = "http://" + host + ":" + port;
+                startRendererEvents();
             } catch (Exception e) {
                 Log.e("Could not start stream proxy", e);
                 toast(DlnaCast.t("Streamen fehlgeschlagen: ", "Cast failed: ") + e.getMessage());
@@ -126,6 +139,11 @@ final class CastSession implements StreamCapture.Listener {
         stopped = true;
         Log.i("Cast session stopped");
         StreamCapture.removeListener(this);
+        String token = avTransportToken;
+        if (token != null) {
+            avTransportToken = null;
+            new Thread(() -> NativeProxy.nativeUnsubscribe(token), "YtDlna-unsubscribe").start();
+        }
         main.post(() -> {
             if (controller != null) controller.unregisterCallback(callback);
             restoreLocalVolume();
@@ -263,6 +281,123 @@ final class CastSession implements StreamCapture.Listener {
 
     // endregion
 
+    // region Renderer events
+
+    /** Subscribes to renderer events through the native proxy, or polls the renderer. */
+    private void startRendererEvents() {
+        if (StreamProxy.isNative() && device.avTransportEventUrl != null) {
+            avTransportToken = NativeProxy.nativeSubscribe(device.avTransportEventUrl, baseUrl);
+        }
+        if (avTransportToken != null) {
+            Thread thread = new Thread(this::eventLoop, "YtDlna-events");
+            thread.setDaemon(true);
+            thread.start();
+        } else {
+            Log.i("Renderer events not available, polling the renderer");
+            main.postDelayed(this::poll, POLL_INTERVAL_MS);
+        }
+        main.postDelayed(this::syncPosition, SYNC_INTERVAL_MS);
+    }
+
+    private void eventLoop() {
+        while (!stopped) {
+            String event = NativeProxy.nativeWaitEvent(1000);
+            if (event == null) continue;
+            String[] parts = event.split("\n", 3);
+            if (parts.length < 3 || !parts[0].equals(avTransportToken)) continue;
+            String name = parts[1];
+            String value = parts[2];
+            if (name.equals("SubscriptionLost")) {
+                Log.i("Renderer event subscription lost, polling instead");
+                main.postDelayed(this::poll, POLL_INTERVAL_MS);
+                return;
+            }
+            main.post(() -> onRendererEvent(name, value));
+        }
+    }
+
+    private void poll() {
+        if (stopped) return;
+        renderer.execute(() -> {
+            try {
+                String state = DlnaController.transportState(device);
+                main.post(() -> onRendererEvent("TransportState", state));
+            } catch (Exception e) {
+                Log.d("Polling renderer failed: " + e.getMessage());
+            }
+        });
+        main.postDelayed(this::poll, POLL_INTERVAL_MS);
+    }
+
+    /** Renderer state change, on the main thread. */
+    private void onRendererEvent(String name, String value) {
+        if (stopped || !name.equals("TransportState") || value.equals(rendererState)) return;
+        String previous = rendererState;
+        rendererState = value;
+        Log.d("Renderer " + previous + " -> " + value);
+        if (SystemClock.elapsedRealtime() < ignoreRendererUntil) return;
+
+        MediaController c = controller;
+        PlaybackState local = c == null ? null : c.getPlaybackState();
+        int localState = local == null ? PlaybackState.STATE_NONE : local.getState();
+        switch (value) {
+            case "PAUSED_PLAYBACK":
+                if (localState == PlaybackState.STATE_PLAYING) {
+                    Log.i("Paused on the renderer");
+                    c.getTransportControls().pause();
+                }
+                break;
+            case "PLAYING":
+                if (localState == PlaybackState.STATE_PAUSED) {
+                    Log.i("Resumed on the renderer");
+                    c.getTransportControls().play();
+                }
+                break;
+            case "STOPPED":
+                long remaining = local == null || c.getMetadata() == null ? Long.MAX_VALUE
+                        : c.getMetadata().getLong(MediaMetadata.METADATA_KEY_DURATION) - localPosition();
+                if (remaining > 5000) {
+                    // Stopped on the TV, not the end of the video: end the cast like YouTube does.
+                    Log.i("Stopped on the renderer, ending the cast");
+                    if (c != null) c.getTransportControls().pause();
+                    toast(DlnaCast.t("Wiedergabe auf ", "Playback on ") + device.friendlyName
+                            + DlnaCast.t(" beendet", " ended"));
+                    stopActive(false);
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    /** Keeps the phone at the renderer's position, since the renderer is what is heard. */
+    private void syncPosition() {
+        if (stopped) return;
+        main.postDelayed(this::syncPosition, SYNC_INTERVAL_MS);
+        if (!"PLAYING".equals(rendererState) && !rendererState.isEmpty()) return;
+        renderer.execute(() -> {
+            try {
+                if (loadedVideoId == null || !loadedVideoId.equals(StreamCapture.currentVideoId())) return;
+                long remote = DlnaController.position(device);
+                long local = localPosition();
+                if (remote < 0 || SystemClock.elapsedRealtime() < ignorePositionUntil) return;
+                if (Math.abs(remote - local) > DRIFT_THRESHOLD_MS) {
+                    Log.i("Correcting phone position " + local + " -> " + remote + " ms");
+                    main.post(() -> {
+                        MediaController c = controller;
+                        if (c == null) return;
+                        ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
+                        c.getTransportControls().seekTo(remote);
+                    });
+                }
+            } catch (Exception e) {
+                Log.d("Position sync failed: " + e.getMessage());
+            }
+        });
+    }
+
+    // endregion
+
     // region Streams
 
     @Override
@@ -299,6 +434,7 @@ final class CastSession implements StreamCapture.Listener {
                         + "\" by \"" + track.artist + "\" on " + device + ": " + url);
 
                 ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
+                ignoreRendererUntil = SystemClock.elapsedRealtime() + RENDERER_LOAD_SETTLE_MS;
                 DlnaController.play(device, url, media.mimeType, track, art, media.video);
                 loadedVideoId = info.videoId;
 
@@ -326,6 +462,7 @@ final class CastSession implements StreamCapture.Listener {
 
     private void call(String action, RendererCall call) {
         if (stopped) return;
+        ignoreRendererUntil = SystemClock.elapsedRealtime() + RENDERER_ECHO_MS;
         try {
             call.run();
         } catch (Exception e) {

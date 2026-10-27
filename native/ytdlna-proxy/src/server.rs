@@ -1,11 +1,12 @@
 //! HTTP server the renderer streams from.
 
-use std::io::{self, BufReader, BufWriter, Write};
+use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
+use crate::events;
 use crate::http::{self, RangeResult, Request};
 use crate::registry::{self, Entry, Stream};
 use crate::upstream;
@@ -62,6 +63,22 @@ fn handle_connection(stream: TcpStream, peer: &str) -> io::Result<()> {
     let mut writer = BufWriter::with_capacity(64 * 1024, stream);
 
     while let Some(request) = http::read_request(&mut reader)? {
+        if request.method == "NOTIFY" {
+            // Renderer event (GENA). Bodies are small; refuse anything unreasonable.
+            if request.content_length > 1024 * 1024 {
+                return Ok(());
+            }
+            let mut body = vec![0u8; request.content_length];
+            reader.read_exact(&mut body)?;
+            let token = request.path.strip_prefix("/evt/").unwrap_or("");
+            let known = events::handle_notify(token, &String::from_utf8_lossy(&body));
+            http::write_head(&mut writer, if known { 200 } else { 412 }, &[("Content-Length", "0".into())], request.keep_alive)?;
+            writer.flush()?;
+            if !request.keep_alive {
+                break;
+            }
+            continue;
+        }
         crate::debug!(
             "Proxy {peer}: {} {}{}",
             request.method,

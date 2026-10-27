@@ -1,12 +1,13 @@
 //! JNI entry points for app.ytdlna.extension.NativeProxy.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::time::Duration;
 
-use jni::objects::{JClass, JString};
-use jni::sys::{jboolean, jint, jlong, JNI_TRUE};
+use jni::objects::{JClass, JObject, JString};
+use jni::sys::{jboolean, jint, jlong, jstring, JNI_TRUE};
 use jni::JNIEnv;
 
-use crate::{log, registry, server, upstream};
+use crate::{events, log, registry, server, upstream};
 
 fn string(env: &mut JNIEnv, value: &JString) -> String {
     env.get_string(value).map(Into::into).unwrap_or_default()
@@ -92,4 +93,51 @@ pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeRemovePrefix(
 ) {
     let prefix = string(&mut env, &prefix);
     guarded((), || registry::remove_prefix(&prefix));
+}
+
+/// Subscribes to a renderer service. Returns the subscription token, or null on failure.
+#[no_mangle]
+pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeSubscribe(
+    mut env: JNIEnv,
+    _class: JClass,
+    event_url: JString,
+    callback_base: JString,
+) -> jstring {
+    let event_url = string(&mut env, &event_url);
+    let callback_base = string(&mut env, &callback_base);
+    let token = guarded(None, || match events::subscribe(&event_url, &callback_base) {
+        Ok(token) => Some(token),
+        Err(e) => {
+            crate::info!("Subscribing to {event_url} failed: {e}");
+            None
+        }
+    });
+    match token.and_then(|t| env.new_string(t).ok()) {
+        Some(s) => s.into_raw(),
+        None => JObject::null().into_raw(),
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeUnsubscribe(
+    mut env: JNIEnv,
+    _class: JClass,
+    token: JString,
+) {
+    let token = string(&mut env, &token);
+    guarded((), || events::unsubscribe(&token));
+}
+
+/// Waits for the next renderer event. Returns "token\nname\nvalue", or null on timeout.
+#[no_mangle]
+pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeWaitEvent(
+    env: JNIEnv,
+    _class: JClass,
+    timeout_ms: jint,
+) -> jstring {
+    let event = guarded(None, || events::wait(Duration::from_millis(timeout_ms.max(0) as u64)));
+    match event.and_then(|e| env.new_string(format!("{}\n{}\n{}", e.token, e.name, e.value)).ok()) {
+        Some(s) => s.into_raw(),
+        None => JObject::null().into_raw(),
+    }
 }

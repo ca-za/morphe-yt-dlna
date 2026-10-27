@@ -102,4 +102,12 @@ final class NativeProxy {
     static native void nativePutStream(String path, String mimeType, String url, long contentLength);
 
     static native void nativeRemovePrefix(String prefix);
+
+    /** Subscribes to renderer events. Returns the subscription token, or null. */
+    static native String nativeSubscribe(String eventUrl, String callbackBase);
+
+    static native void nativeUnsubscribe(String token);
+
+    /** Next renderer event as "token\nname\nvalue", or null after the timeout. */
+    static native String nativeWaitEvent(int timeoutMs);
 }

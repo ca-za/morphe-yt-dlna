@@ -84,6 +84,10 @@ final class StreamProxy {
         return get().port();
     }
 
+    static boolean isNative() {
+        return nativePort > 0;
+    }
+
     /**
      * Makes the streams of a video available. The Java proxy reads them from
      * {@link StreamCapture} on demand, the native proxy needs them registered.

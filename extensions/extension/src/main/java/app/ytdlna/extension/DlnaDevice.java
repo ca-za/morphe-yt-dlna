@@ -20,6 +20,19 @@ final class DlnaDevice {
     String avTransportControlUrl;
     String connectionManagerType = CONNECTION_MANAGER + "1";
     String connectionManagerControlUrl;
+    String avTransportEventUrl;
+
+    // OpenHome services, if the renderer has them.
+    String playlistType;
+    String playlistControlUrl;
+    String playlistEventUrl;
+    String productType;
+    String productControlUrl;
+    String timeEventUrl;
+
+    boolean hasOpenHomePlaylist() {
+        return playlistControlUrl != null;
+    }
 
     /** Lazily loaded ConnectionManager sink protocols. Null if not yet queried. */
     volatile String sinkProtocols;
@@ -71,6 +84,7 @@ final class DlnaDevice {
         String base = location;
         String serviceType = null;
         String controlUrl = null;
+        String eventUrl = null;
         int deviceDepth = 0;
         StringBuilder text = new StringBuilder();
 
@@ -83,6 +97,7 @@ final class DlnaDevice {
                     if (start.equals("service")) {
                         serviceType = null;
                         controlUrl = null;
+                        eventUrl = null;
                     }
                     break;
                 case XmlPullParser.TEXT:
@@ -107,13 +122,31 @@ final class DlnaDevice {
                         case "controlURL":
                             controlUrl = value;
                             break;
+                        case "eventSubURL":
+                            eventUrl = value;
+                            break;
                         case "service":
                             if (serviceType != null && controlUrl != null) {
                                 String absolute = new URL(new URL(base), controlUrl).toString();
+                                String absoluteEvent = eventUrl == null || eventUrl.isEmpty()
+                                        ? null : new URL(new URL(base), eventUrl).toString();
                                 // First match wins (root device before embedded devices).
                                 if (serviceType.startsWith(AV_TRANSPORT) && avTransportControlUrl == null) {
                                     avTransportType = serviceType;
                                     avTransportControlUrl = absolute;
+                                    avTransportEventUrl = absoluteEvent;
+                                } else if (serviceType.startsWith("urn:av-openhome-org:service:Playlist:")
+                                        && playlistControlUrl == null) {
+                                    playlistType = serviceType;
+                                    playlistControlUrl = absolute;
+                                    playlistEventUrl = absoluteEvent;
+                                } else if (serviceType.startsWith("urn:av-openhome-org:service:Product:")
+                                        && productControlUrl == null) {
+                                    productType = serviceType;
+                                    productControlUrl = absolute;
+                                } else if (serviceType.startsWith("urn:av-openhome-org:service:Time:")
+                                        && timeEventUrl == null) {
+                                    timeEventUrl = absoluteEvent;
                                 } else if (serviceType.startsWith(CONNECTION_MANAGER)
                                         && connectionManagerControlUrl == null) {
                                     connectionManagerType = serviceType;

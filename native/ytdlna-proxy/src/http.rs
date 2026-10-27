@@ -7,6 +7,7 @@ pub struct Request {
     pub path: String,
     pub range: Option<String>,
     pub keep_alive: bool,
+    pub content_length: usize,
 }
 
 /// Reads one request head. Returns Ok(None) when the client closed the connection.
@@ -29,6 +30,7 @@ pub fn read_request<R: BufRead>(reader: &mut R) -> io::Result<Option<Request>> {
     let path = target.split('?').next().unwrap_or("/").to_string();
 
     let mut range = None;
+    let mut content_length = 0usize;
     let mut keep_alive = version.eq_ignore_ascii_case("HTTP/1.1");
     let mut header_bytes = 0usize;
     loop {
@@ -47,7 +49,9 @@ pub fn read_request<R: BufRead>(reader: &mut R) -> io::Result<Option<Request>> {
         }
         if let Some((name, value)) = trimmed.split_once(':') {
             let value = value.trim();
-            if name.eq_ignore_ascii_case("range") {
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = value.parse().unwrap_or(0);
+            } else if name.eq_ignore_ascii_case("range") {
                 range = Some(value.to_string());
             } else if name.eq_ignore_ascii_case("connection") {
                 let value = value.to_ascii_lowercase();
@@ -64,6 +68,7 @@ pub fn read_request<R: BufRead>(reader: &mut R) -> io::Result<Option<Request>> {
         path,
         range,
         keep_alive,
+        content_length,
     }))
 }
 
@@ -131,6 +136,7 @@ pub fn reason(status: u16) -> &'static str {
         206 => "Partial Content",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        412 => "Precondition Failed",
         416 => "Range Not Satisfiable",
         _ => "Bad Gateway",
     }

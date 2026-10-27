@@ -9,6 +9,7 @@
 //! - supports keep-alive towards the renderer,
 //! - fetches large ranges in chunks with a read-ahead buffer and retries failed chunks.
 
+pub mod events;
 pub mod http;
 pub mod log;
 pub mod registry;
