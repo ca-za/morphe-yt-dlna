@@ -1,3 +1,9 @@
+## [1.0.0-alpha.2](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.1...v1.0.0-alpha.2) (2026-10-27)
+
+### 🐛 Bug Fixes
+
+* Support the app versions Morphe recommends ([6f20d02](https://github.com/ca-za/morphe-yt-dlna/commit/6f20d02a165c7831f62b3c4d00dffc0bd080e35a))
+
 ## 1.0.0-alpha.1 (2026-10-27)
 
 ### 🐛 Bug Fixes
