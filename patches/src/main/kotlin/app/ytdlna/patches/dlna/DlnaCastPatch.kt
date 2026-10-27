@@ -203,9 +203,14 @@ val dlnaCastPatch = bytecodePatch(
         // Capture the streams the player is about to use.
         // p1 = StreamingData proto, p2 = VideoDetails proto. Neither 'this' nor
         // locals are touched, so this is safe before the super constructor call.
+        // While casting, the player gets a reduced copy (audio only), see LocalPlayback.
         VideoStreamingDataConstructorFingerprint.method.addInstructions(
             0,
-            "invoke-static/range { p1 .. p2 }, $CAPTURE_CLASS->onStreamingData(Ljava/lang/Object;Ljava/lang/Object;)V"
+            """
+                invoke-static/range { p1 .. p2 }, $CAPTURE_CLASS->onStreamingData(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;
+                move-result-object p1
+                check-cast p1, $STREAMING_DATA_CLASS
+            """
         )
 
         // Remember which video is playing. The first String getter the method calls on the

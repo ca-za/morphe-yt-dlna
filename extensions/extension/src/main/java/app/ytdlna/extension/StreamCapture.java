@@ -61,41 +61,69 @@ public final class StreamCapture {
      */
     private static boolean checkedVolume;
 
-    public static void onStreamingData(Object streamingData, Object videoDetails) {
-        if (streamingData == null) return;
+    /**
+     * Injection point, at the start of the video streaming data constructor.
+     *
+     * @param streamingData StreamingData proto (com.google.protobuf.MessageLite).
+     * @param videoDetails  VideoDetails proto (com.google.protobuf.MessageLite).
+     * @return The streaming data the app's player gets: while casting only the smallest audio
+     *         track, otherwise {@code streamingData} unchanged.
+     */
+    public static Object onStreamingData(Object streamingData, Object videoDetails) {
+        if (streamingData == null) return null;
         if (!checkedVolume) {
             // First playback after an app start: undo a mute left by an interrupted cast.
             checkedVolume = true;
             android.content.Context context = currentContext();
             if (context != null) CastSession.restoreVolumeAfterCrash(context);
         }
-        // Protos are immutable, so they can be serialized off the player thread.
-        executor.execute(() -> {
-            try {
-                StreamInfo info = StreamInfo.parse(toBytes(streamingData), toBytes(videoDetails));
-                if (info.videoId.isEmpty() || info.formats.isEmpty()) {
-                    Log.d("Ignoring streams without video id or formats: " + info.summary());
-                    return;
-                }
-                synchronized (streams) {
-                    streams.remove(info.videoId); // Re-insert as newest.
-                    streams.put(info.videoId, info);
-                }
-                Log.i("Captured " + info.summary());
-                for (StreamInfo.Format f : info.formats) {
-                    Log.d("  " + f);
-                }
-                for (Listener listener : listeners) {
-                    try {
-                        listener.onStreams(info);
-                    } catch (Throwable t) {
-                        Log.e("Stream listener failed", t);
-                    }
-                }
-            } catch (Throwable t) {
-                Log.e("Failed to capture streams", t);
+        byte[] bytes;
+        try {
+            bytes = toBytes(streamingData);
+        } catch (Throwable t) {
+            Log.e("Could not read streaming data", t);
+            return streamingData;
+        }
+        executor.execute(() -> capture(bytes, videoDetails));
+
+        if (CastSession.active() == null) return streamingData;
+        try {
+            byte[] audioOnly = LocalPlayback.audioOnly(bytes);
+            if (audioOnly == null) return streamingData;
+            Object replacement = LocalPlayback.toProto(streamingData, audioOnly);
+            Log.d("Local player gets audio only (" + bytes.length + " -> " + audioOnly.length + " bytes)");
+            return replacement;
+        } catch (Throwable t) {
+            Log.e("Could not reduce local playback", t);
+            return streamingData;
+        }
+    }
+
+    private static void capture(byte[] streamingData, Object videoDetails) {
+        try {
+            StreamInfo info = StreamInfo.parse(streamingData, toBytes(videoDetails));
+            if (info.videoId.isEmpty() || info.formats.isEmpty()) {
+                Log.d("Ignoring streams without video id or formats: " + info.summary());
+                return;
             }
-        });
+            synchronized (streams) {
+                streams.remove(info.videoId); // Re-insert as newest.
+                streams.put(info.videoId, info);
+            }
+            Log.i("Captured " + info.summary());
+            for (StreamInfo.Format f : info.formats) {
+                Log.d("  " + f);
+            }
+            for (Listener listener : listeners) {
+                try {
+                    listener.onStreams(info);
+                } catch (Throwable t) {
+                    Log.e("Stream listener failed", t);
+                }
+            }
+        } catch (Throwable t) {
+            Log.e("Failed to capture streams", t);
+        }
     }
 
     /** Video id of the video or track the player loaded last. */

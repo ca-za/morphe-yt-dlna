@@ -193,8 +193,16 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         avTransportToken = null;
         playlistToken = null;
         main.post(() -> {
-            if (controller != null) controller.unregisterCallback(callback);
-            CastAudio.setMuted(false);
+            boolean reloading = false;
+            if (controller != null) {
+                controller.unregisterCallback(callback);
+                // Back to the full streams (with video) on the phone.
+                reloading = reloadLocal(controller);
+            }
+            // Unmute once the reload passed the neighbouring title.
+            main.postDelayed(() -> {
+                if (CastSession.active() == null) CastAudio.setMuted(false);
+            }, reloading ? 2500 : 0);
             restoreLocalVolume();
         });
         if (stopRenderer) {
@@ -225,6 +233,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         }
         controller = new MediaController(context, token);
         controller.registerCallback(callback, main);
+        // The running title still plays with video locally: reload it, now audio only.
+        reloadLocal(controller);
         logSession();
         if (openHome && loadedVideoId != null) {
             List<QueueEntry> entries = readQueue(controller.getQueue());
@@ -324,6 +334,11 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
 
     private void onLocalState(PlaybackState state) {
         if (state == null || stopped) return;
+        if (SystemClock.elapsedRealtime() < reloadUntil) {
+            // The phone is reloading its title; nothing of this is a user action.
+            rememberState(state);
+            return;
+        }
         int newState = state.getState();
         long now = SystemClock.elapsedRealtime();
 
@@ -512,6 +527,73 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
 
     // endregion
 
+    // region Local player
+
+    /** While the phone reloads a title, other titles it passes through are ignored. */
+    private volatile long reloadUntil;
+    private volatile String reloadVideoId;
+
+    private boolean reloading(String videoId) {
+        return SystemClock.elapsedRealtime() < reloadUntil && videoId != null && !videoId.equals(reloadVideoId);
+    }
+
+    /**
+     * Makes the app load the current title again, so its player gets new streaming data
+     * (audio only while casting, all formats after). The app reuses the streaming data when the
+     * same title is selected again, so this briefly selects a neighbouring queue item and comes
+     * back. Continues at the same position. Does nothing without a queue.
+     */
+    /** @return true if a reload was started. */
+    private boolean reloadLocal(MediaController c) {
+        PlaybackState state = c.getPlaybackState();
+        List<MediaSession.QueueItem> queue = c.getQueue();
+        String videoId = StreamCapture.currentVideoId();
+        if (state == null || queue == null || queue.size() < 2 || videoId == null) {
+            Log.d("Can not reload the local title (no queue)");
+            return false;
+        }
+        long current = state.getActiveQueueItemId();
+        int index = -1;
+        for (int i = 0; i < queue.size(); i++) {
+            if (queue.get(i).getQueueId() == current) index = i;
+        }
+        if (index < 0) return false;
+        long neighbour = queue.get(index + 1 < queue.size() ? index + 1 : index - 1).getQueueId();
+        long position = localPosition();
+        boolean paused = state.getState() == PlaybackState.STATE_PAUSED;
+        Log.d("Reloading the local title " + videoId + " at " + position + " ms");
+
+        reloadVideoId = videoId;
+        reloadUntil = SystemClock.elapsedRealtime() + 6000;
+        ignorePositionUntil = reloadUntil;
+        MediaController.TransportControls controls = c.getTransportControls();
+        controls.skipToQueueItem(neighbour);
+        main.postDelayed(() -> controls.skipToQueueItem(current), 700);
+        // Seek back once the title is loaded again; retried, since loading takes a moment.
+        for (long delay : new long[]{2200, 3500, 5000}) {
+            main.postDelayed(() -> {
+                MediaController now = c;
+                if (!videoId.equals(StreamCapture.currentVideoId())) return;
+                if (Math.abs(positionOf(now) - position) > SEEK_THRESHOLD_MS) now.getTransportControls().seekTo(position);
+                if (paused) now.getTransportControls().pause();
+            }, delay);
+        }
+        return true;
+    }
+
+    private static long positionOf(MediaController c) {
+        PlaybackState state = c.getPlaybackState();
+        if (state == null) return 0;
+        long position = state.getPosition();
+        if (state.getState() == PlaybackState.STATE_PLAYING) {
+            position += (long) ((SystemClock.elapsedRealtime() - state.getLastPositionUpdateTime())
+                    * state.getPlaybackSpeed());
+        }
+        return position;
+    }
+
+    // endregion
+
     // region Song/video mode
 
     /** YouTube Music switched between song and video: reload the title in the other format. */
@@ -535,6 +617,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
 
     @Override
     public void onStreams(StreamInfo info) {
+        if (reloading(info.videoId)) return;
         if (info.videoId.equals(StreamCapture.currentVideoId())) {
             load(info);
         } else if (openHome && queueIdByVideo.containsKey(info.videoId)) {
@@ -545,7 +628,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
 
     @Override
     public void onVideoLoaded(String videoId) {
-        ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
+        if (reloading(videoId)) return;
+        ignorePositionUntil = Math.max(ignorePositionUntil, SystemClock.elapsedRealtime() + LOAD_SETTLE_MS);
         StreamInfo info = StreamCapture.get(videoId);
         // Otherwise loaded once the streams are captured.
         if (info != null) load(info);

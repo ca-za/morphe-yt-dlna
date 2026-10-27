@@ -19,6 +19,8 @@ final class Proto {
         final int wireType;
         final long varint;
         final byte[] data;
+        /** Byte range of the whole field (key and value) in the parsed message. */
+        int start, end;
 
         Field(int number, int wireType, long varint, byte[] data) {
             this.number = number;
@@ -40,6 +42,7 @@ final class Proto {
         List<Field> fields = new ArrayList<>();
         int[] pos = {0};
         while (pos[0] < buf.length) {
+            int start = pos[0];
             long key = readVarint(buf, pos);
             int number = (int) (key >>> 3);
             int wireType = (int) (key & 7);
@@ -60,6 +63,9 @@ final class Proto {
                 default:
                     throw new IllegalArgumentException("Unsupported wire type " + wireType);
             }
+            Field field = fields.get(fields.size() - 1);
+            field.start = start;
+            field.end = pos[0];
         }
         return fields;
     }
