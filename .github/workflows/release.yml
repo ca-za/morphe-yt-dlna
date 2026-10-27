@@ -25,6 +25,13 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      # The stream proxy is Rust, cross-compiled for Android with the runner's NDK.
+      - name: Setup Rust for Android
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add --toolchain stable aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
