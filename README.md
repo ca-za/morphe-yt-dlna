@@ -17,15 +17,25 @@ add-on to the official [Morphe](https://morphe.software) patches.
 
 ## Install
 
-> **Alpha**: releases are pre-releases (`1.0.0-alpha.N`) for now. In Morphe Manager, open the
-> source under *Sources* and turn on **Pre-release patches**, otherwise it shows no version.
+> **Alpha**: releases are pre-releases (`1.0.0-alpha.N`) for now.
+
+The patch is an add-on: it is applied **together with** the official Morphe patches, which
+Morphe Manager does only in Expert mode (in Simple mode it applies one source per app).
 
 1. Add this source to Morphe Manager:
    https://morphe.software/add-source?github=ca-za/morphe-yt-dlna
-2. Patch YouTube or YouTube Music with the official Morphe patches **and** "DLNA cast". The patch
-   is an add-on and refuses to patch without the official patches (including GmsCore support).
-3. To see the cast button, turn off Morphe's "Hide cast button" (on by default; YouTube:
+2. Under *Sources*, open "YT DLNA Patches" and turn on **Pre-release patches**.
+3. Under *Settings → Patching*, turn on **Expert mode**.
+4. Patch YouTube or YouTube Music with the **recommended version** (the same for both sources;
+   YouTube 21.20.405, YouTube Music 9.20.53 at the moment). On the patch selection screen, keep
+   the recommended patches in the "Morphe Patches" tab and turn on "DLNA cast" in the
+   "YT DLNA Patches" tab. Morphe warns about mixing sources; this one is meant for it.
+   Without the official patches (including GmsCore support), "DLNA cast" refuses to patch.
+5. To see the cast button, turn off Morphe's "Hide cast button" (on by default; YouTube:
    Player, YouTube Music: General). Casting from the share menu works either way.
+
+Supported versions: the ones of the official patches that the regression tests cover, with
+the same recommended and experimental ones.
 
 ## Settings
 

@@ -4,14 +4,29 @@ import app.morphe.patcher.patch.ApkFileType
 import app.morphe.patcher.patch.AppTarget
 import app.morphe.patcher.patch.Compatibility
 
+/**
+ * The app versions of the official Morphe patches (same recommended and experimental ones, same
+ * signatures), as far as the regression tests cover them: Morphe Manager patches both sources
+ * together only for a version they share.
+ */
 internal object Constants {
     val COMPATIBILITY_YOUTUBE = Compatibility(
         name = "YouTube",
         packageName = "com.google.android.youtube",
         apkFileType = ApkFileType.APK_REQUIRED,
         appIconColor = 0xFF0033,
+        signatures = setOf(
+            // Android 13+
+            "5aad2bee6db95d17e05a08d7d1e64c10a1511879154483916b6ae6c7fd9cb0c6",
+            // Android 7+
+            "3d7a1223019aa39d9ea0e3436ab7c0896bfb4fb679f4de5fe7c23f326c8f994a"
+        ),
         targets = listOf(
-            AppTarget(version = "21.42.241", minSdk = 29),
+            AppTarget(version = "21.42.241", minSdk = 29, isExperimental = true),
+            AppTarget(version = "21.41.525", minSdk = 29, isExperimental = true),
+            // Recommended, as by Morphe.
+            AppTarget(version = "21.20.405", minSdk = 28),
+            AppTarget(version = "20.51.39", minSdk = 28),
         )
     )
 
@@ -20,8 +35,19 @@ internal object Constants {
         packageName = "com.google.android.apps.youtube.music",
         apkFileType = ApkFileType.APK_REQUIRED,
         appIconColor = 0xFF0000,
+        signatures = setOf(
+            // Android 13+
+            "6a2f65ec694a6a632acdcb5080912a565f903d4b8d83f0eb8e44fbdf2660d8e1",
+            // Android 7+
+            "a2a1ad7ba7f41dfca4514e2afeb90691719af6d0fdbed4b09bbf0ed897701ceb"
+        ),
         targets = listOf(
-            AppTarget(version = "9.42.52"),
+            AppTarget(version = "9.42.52", minSdk = 26, isExperimental = true),
+            AppTarget(version = "9.41.52", minSdk = 26, isExperimental = true),
+            AppTarget(version = "9.40.51", minSdk = 26, isExperimental = true),
+            // Recommended, as by Morphe.
+            AppTarget(version = "9.20.53", minSdk = 26),
+            AppTarget(version = "9.15.51", minSdk = 26),
         )
     )
 }

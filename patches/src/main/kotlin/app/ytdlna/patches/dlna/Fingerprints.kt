@@ -46,19 +46,22 @@ internal object CastButtonPerformClickFingerprint : Fingerprint(
 )
 
 /**
- * The cast button controller's update (YouTube anqm.d, Music xrn.c): asks the media router
- * whether a Google Cast device is available (a static call taking the route selector and flags),
- * publishes the answer and shows or hides all cast buttons accordingly. Its visual element id
- * 11208 is the cast button's.
+ * The cast button controller's update (YouTube anqm.d / akjk.d, Music xrn.c): asks the media
+ * router whether a Google Cast device is available (a static call taking the route selector and
+ * flags), compares it with what it shows, and on a change shows or hides all cast buttons and
+ * publishes the answer. Older versions apply the buttons in a helper method; the class has the
+ * cast button's visual element id 11208 either way.
  */
 internal object CastButtonControllerUpdateFingerprint : Fingerprint(
     returnType = "V",
     parameters = listOf(),
-    custom = { method, _ ->
-        val instructions = method.implementation?.instructions?.toList().orEmpty()
-        instructions.any { (it as? NarrowLiteralInstruction)?.narrowLiteral == CAST_BUTTON_ELEMENT_ID } &&
-            instructions.any { routeAvailableCall(it) } &&
-            instructions.any { ((it as? ReferenceInstruction)?.reference as? MethodReference)?.name == "setEnabled" }
+    custom = { method, classDef ->
+        method.implementation?.instructions?.any { routeAvailableCall(it) } == true &&
+            classDef.methods.any { other ->
+                other.implementation?.instructions?.any {
+                    (it as? NarrowLiteralInstruction)?.narrowLiteral == CAST_BUTTON_ELEMENT_ID
+                } == true
+            }
     }
 )
 
