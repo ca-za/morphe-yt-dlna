@@ -48,6 +48,20 @@ pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeSetUserAgent(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeSetControlPoint(
+    mut env: JNIEnv,
+    _class: JClass,
+    name: JString,
+    uuid: JString,
+    user_agent: JString,
+) {
+    let name = string(&mut env, &name);
+    let uuid = string(&mut env, &uuid);
+    let user_agent = string(&mut env, &user_agent);
+    guarded((), || events::set_control_point(&name, &uuid, &user_agent));
+}
+
+#[no_mangle]
 pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativePutText(
     mut env: JNIEnv,
     _class: JClass,

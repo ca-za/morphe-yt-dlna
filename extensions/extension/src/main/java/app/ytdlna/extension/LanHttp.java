@@ -58,7 +58,11 @@ final class LanHttp {
             head.append(method).append(' ').append(path).append(" HTTP/1.1\r\n");
             head.append("Host: ").append(u.getHost()).append(':').append(port).append("\r\n");
             head.append("Connection: close\r\n");
-            head.append("User-Agent: YtDlna/1.0 UPnP/1.0\r\n");
+            for (Map.Entry<String, String> h : ControlPoint.headers().entrySet()) {
+                if (headers == null || !headers.containsKey(h.getKey())) {
+                    head.append(h.getKey()).append(": ").append(h.getValue()).append("\r\n");
+                }
+            }
             if (headers != null) {
                 for (Map.Entry<String, String> h : headers.entrySet()) {
                     head.append(h.getKey()).append(": ").append(h.getValue()).append("\r\n");

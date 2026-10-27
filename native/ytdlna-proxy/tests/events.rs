@@ -112,3 +112,43 @@ fn initial_notify_before_subscribe_response() {
     assert_eq!(event.token, token);
     assert_eq!(event.value, "Stopped");
 }
+
+/// Subscriptions name the phone with the UPnP control point headers, also non-ASCII names.
+#[test]
+fn subscribe_sends_control_point_headers() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    events::set_control_point("Living Room Phone ü", "0f9c6a4e-1111-4222-8333-944455556666", "Android/15 UPnP/1.1 YouTubeMusic/9.42.52 YtDlna/1.0");
+    let proxy_port = server::start(0).unwrap();
+    let renderer = TcpListener::bind("127.0.0.1:0").unwrap();
+    let renderer_port = renderer.local_addr().unwrap().port();
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    thread::spawn(move || {
+        let (mut conn, _) = renderer.accept().unwrap();
+        let mut reader = BufReader::new(conn.try_clone().unwrap());
+        let mut head = Vec::new();
+        loop {
+            let mut line = Vec::new();
+            reader.read_until(b'\n', &mut line).unwrap();
+            if line == b"\r\n" || line.is_empty() {
+                break;
+            }
+            head.extend_from_slice(&line);
+        }
+        conn.write_all(b"HTTP/1.1 200 OK\r\nSID: uuid:cp\r\nTIMEOUT: Second-300\r\nContent-Length: 0\r\n\r\n").unwrap();
+        tx.send(head).unwrap();
+    });
+    events::subscribe(
+        &format!("http://127.0.0.1:{renderer_port}/Playlist/event"),
+        &format!("http://127.0.0.1:{proxy_port}"),
+    )
+    .unwrap();
+    let head = String::from_utf8(rx.recv_timeout(Duration::from_secs(5)).unwrap()).unwrap();
+    let header = |name: &str| {
+        head.lines()
+            .find_map(|l| l.split_once(": ").filter(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.to_string()))
+    };
+    assert_eq!(header("CPFN.UPNP.ORG").as_deref(), Some("Living Room Phone %C3%BC"));
+    assert_eq!(header("CPUUID.UPNP.ORG").as_deref(), Some("0f9c6a4e-1111-4222-8333-944455556666"));
+    assert_eq!(header("User-Agent").as_deref(), Some("Android/15 UPnP/1.1 YouTubeMusic/9.42.52 YtDlna/1.0"));
+    events::set_control_point("", "", "");
+}

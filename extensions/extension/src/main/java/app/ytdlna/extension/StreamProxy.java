@@ -53,6 +53,9 @@ final class StreamProxy {
         if (!NativeProxy.load(context)) throw new IOException("Stream proxy not available on this device");
         int started = NativeProxy.nativeStart(PREFERRED_PORT);
         if (started <= 0) throw new IOException("Stream proxy could not start");
+        // Event subscriptions are sent by the proxy: they introduce the phone like our requests do.
+        ControlPoint.init(context);
+        NativeProxy.nativeSetControlPoint(ControlPoint.name(), ControlPoint.uuid(), ControlPoint.userAgent());
         port = started;
         return port;
     }

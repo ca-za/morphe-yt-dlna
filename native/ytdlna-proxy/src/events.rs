@@ -6,7 +6,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex, OnceLock};
+use std::sync::{Condvar, Mutex, OnceLock, RwLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -44,6 +44,44 @@ fn new_token() -> String {
     format!("{:x}{:x}", nanos as u64, COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
+/// Headers that name the phone (UPnP control point, UDA 2.0) on every request to a renderer.
+fn control_point() -> &'static RwLock<Vec<(&'static str, String)>> {
+    static HEADERS: OnceLock<RwLock<Vec<(&'static str, String)>>> = OnceLock::new();
+    HEADERS.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+/// Sets the device name, installation id and user agent sent with subscriptions.
+pub fn set_control_point(name: &str, uuid: &str, user_agent: &str) {
+    // Header values are ASCII on one line. The app sends them percent-encoded already; other
+    // bytes are encoded the same way here ('%' is kept, so encoded values stay as they are).
+    let clean = |value: &str| {
+        let mut out = String::new();
+        for byte in value.replace(['\r', '\n'], " ").trim().bytes() {
+            if (0x20..0x7f).contains(&byte) {
+                out.push(byte as char);
+            } else {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        }
+        out
+    };
+    let mut headers = vec![("User-Agent", clean(user_agent)), ("CPFN.UPNP.ORG", clean(name))];
+    if !uuid.is_empty() {
+        headers.push(("CPUUID.UPNP.ORG", clean(uuid)));
+    }
+    headers.retain(|(_, value)| !value.is_empty());
+    *control_point().write().unwrap_or_else(|e| e.into_inner()) = headers;
+}
+
+/// A request to a renderer, with the control point headers.
+fn request(method: &str, url: &str) -> ureq::Request {
+    let mut request = agent().request(method, url);
+    for (name, value) in control_point().read().unwrap_or_else(|e| e.into_inner()).iter() {
+        request = request.set(name, value);
+    }
+    request
+}
+
 fn agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
@@ -64,8 +102,7 @@ pub fn subscribe(event_url: &str, callback_base: &str) -> io::Result<String> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .insert(token.clone(), Subscription { event_url: event_url.to_string(), sid: String::new() });
-    let response = agent()
-        .request("SUBSCRIBE", event_url)
+    let response = request("SUBSCRIBE", event_url)
         .set("CALLBACK", &callback)
         .set("NT", "upnp:event")
         .set("TIMEOUT", &format!("Second-{REQUESTED_TIMEOUT_SECONDS}"))
@@ -94,7 +131,7 @@ pub fn subscribe(event_url: &str, callback_base: &str) -> io::Result<String> {
 pub fn unsubscribe(token: &str) {
     let removed = subscriptions().lock().unwrap_or_else(|e| e.into_inner()).remove(token);
     if let Some(sub) = removed {
-        let _ = agent().request("UNSUBSCRIBE", &sub.event_url).set("SID", &sub.sid).call();
+        let _ = request("UNSUBSCRIBE", &sub.event_url).set("SID", &sub.sid).call();
         crate::debug!("Unsubscribed {}", sub.sid);
     }
 }
@@ -120,8 +157,7 @@ fn spawn_renewal(token: String, timeout: u64) {
                     None => return,
                 }
             };
-            match agent()
-                .request("SUBSCRIBE", &url)
+            match request("SUBSCRIBE", &url)
                 .set("SID", &sid)
                 .set("TIMEOUT", &format!("Second-{REQUESTED_TIMEOUT_SECONDS}"))
                 .call()

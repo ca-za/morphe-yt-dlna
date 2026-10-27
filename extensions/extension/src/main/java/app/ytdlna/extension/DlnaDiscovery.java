@@ -28,6 +28,7 @@ final class DlnaDiscovery {
 
     /** Blocks for about {@code durationMs} while searching. */
     static void search(Context context, int durationMs, Listener listener) {
+        ControlPoint.init(context);
         WifiManager.MulticastLock lock = null;
         try {
             WifiManager wifi = (WifiManager) context.getApplicationContext()
@@ -48,6 +49,9 @@ final class DlnaDiscovery {
                     + "MAN: \"ssdp:discover\"\r\n"
                     + "MX: 2\r\n"
                     + "ST: " + SEARCH_TARGET + "\r\n"
+                    + "USER-AGENT: " + ControlPoint.userAgent() + "\r\n"
+                    + "CPFN.UPNP.ORG: " + ControlPoint.name() + "\r\n"
+                    + (ControlPoint.uuid().isEmpty() ? "" : "CPUUID.UPNP.ORG: " + ControlPoint.uuid() + "\r\n")
                     + "\r\n";
             byte[] data = request.getBytes(StandardCharsets.US_ASCII);
             DatagramPacket packet = new DatagramPacket(data, data.length,

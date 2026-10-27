@@ -95,6 +95,9 @@ final class NativeProxy {
 
     static native void nativeSetUserAgent(String userAgent);
 
+    /** Name, id and user agent of the phone, sent with event subscriptions to renderers. */
+    static native void nativeSetControlPoint(String name, String uuid, String userAgent);
+
     static native void nativePutText(String path, String mimeType, String body);
 
     static native void nativePutStream(String path, String mimeType, String url, long contentLength);
