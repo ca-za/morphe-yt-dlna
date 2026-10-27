@@ -534,7 +534,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
                 Track track = Track.from(info, c == null ? null : c.getMetadata());
                 QueueEntry entry = queueEntryByVideo.get(info.videoId);
                 if (track.artist.isEmpty() && entry != null) track.artist = entry.artist;
-                String art = StreamProxy.registerArt(track, baseUrl);
+                String art = coverFor(track, true);
                 String url = baseUrl + media.path;
                 Log.i("Loading " + info.videoId + " (" + media.description + ") \"" + track.title
                         + "\" by \"" + track.artist + "\" on " + device + ": " + url);
@@ -648,6 +648,14 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
     /** Adds queue entries that are not on the renderer yet, each after its predecessor. */
     private void syncPlaylist(List<QueueEntry> entries) {
         if (stopped || !openHome || loadedVideoId == null && trackIdByVideo.isEmpty() && entries.isEmpty()) return;
+        if (albumArtLookup()) {
+            // Look up the covers of the new entries in parallel before adding them.
+            List<String[]> missing = new ArrayList<>();
+            for (QueueEntry entry : entries) {
+                if (!trackIdByVideo.containsKey(entry.videoId)) missing.add(new String[]{entry.title, entry.artist});
+            }
+            AlbumArt.prefetch(missing, 4000);
+        }
         int after = 0;
         for (QueueEntry entry : entries) {
             Integer existing = trackIdByVideo.get(entry.videoId);
@@ -660,7 +668,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
                 StreamInfo captured = StreamCapture.get(entry.videoId);
                 if (captured != null) registerAuto(captured);
                 try {
-                    existing = insertTrack(after, track, StreamProxy.registerArt(track, baseUrl));
+                    existing = insertTrack(after, track, coverFor(track, false));
                 } catch (Exception e) {
                     Log.i("Adding " + entry.videoId + " to the renderer playlist failed: " + e.getMessage());
                     continue;
@@ -737,6 +745,32 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener {
         Log.i("Phone follows the renderer to " + videoId);
         ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
         c.getTransportControls().skipToQueueItem(queueId);
+    }
+
+    // endregion
+
+    // region Cover
+
+    private boolean albumArtLookup() {
+        return musicApp && AlbumArt.isEnabled(context);
+    }
+
+    /**
+     * Cover for the renderer: the album cover from a music database (linked directly) if enabled
+     * and found, otherwise the YouTube thumbnail through the proxy.
+     *
+     * @param lookup Look the cover up now; otherwise only an already found cover is used.
+     */
+    private String coverFor(Track track, boolean lookup) {
+        if (albumArtLookup()) {
+            String cover = lookup ? AlbumArt.lookup(track.title, track.artist)
+                    : AlbumArt.cached(track.title, track.artist);
+            if (cover != null) {
+                track.artUrl = cover;
+                return cover;
+            }
+        }
+        return StreamProxy.registerArt(track, baseUrl);
     }
 
     // endregion

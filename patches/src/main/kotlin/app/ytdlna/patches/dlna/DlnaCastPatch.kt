@@ -39,8 +39,77 @@ private object PatchResources {
     fun open(path: String) = javaClass.getResourceAsStream(path)
 }
 
+/** File the Morphe settings patch merges add-on preferences from. */
+private const val ADD_ON_PREFERENCES_FILE = "morphe_addon_prefs.xml"
+
+private const val MUSIC_PLAYER_SETTINGS_SCREEN = "morphe_settings_music_screen_4_player"
+
+private val ALBUM_ART_SWITCH = """
+    <SwitchPreference
+        android:key="ytdlna_album_art_lookup"
+        android:title="@string/ytdlna_album_art_lookup_title"
+        android:summary="@string/ytdlna_album_art_lookup_summary"
+        android:defaultValue="true" />
+""".trimIndent()
+
+private val STRINGS = mapOf(
+    "values" to listOf(
+        "ytdlna_album_art_lookup_title" to "DLNA: Album covers from music databases",
+        "ytdlna_album_art_lookup_summary" to "Shows the album cover from Deezer or iTunes on the TV. " +
+            "Title and artist are sent to these services.",
+    ),
+    "values-de" to listOf(
+        "ytdlna_album_art_lookup_title" to "DLNA: Album-Cover aus Musikdatenbanken",
+        "ytdlna_album_art_lookup_summary" to "Zeigt auf dem Fernseher das Album-Cover von Deezer oder iTunes. " +
+            "Dafür werden Titel und Interpret an diese Dienste gesendet.",
+    ),
+)
+
+private fun escapeXml(text: String) =
+    text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "\\'")
+
 private val dlnaManifestPatch = resourcePatch {
     execute {
+        val isMusic = document("AndroidManifest.xml").use { doc ->
+            doc.documentElement.getAttribute("package").contains("music")
+        }
+        if (isMusic) {
+            // Strings for our settings.
+            // Added like Morphe adds strings: to strings.xml without decoding it. A file written
+            // this way adds its strings to the app's; if another patch already decoded the
+            // file, the strings are appended to it.
+            STRINGS.forEach { (folder, strings) ->
+                val elements = strings.joinToString("") { (name, value) ->
+                    "    <string name=\"$name\">${escapeXml(value)}</string>\n"
+                }
+                get("res/$folder/strings.xml", false).apply {
+                    val text = if (exists()) {
+                        readText()
+                    } else {
+                        parentFile.mkdirs()
+                        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources>\n</resources>\n"
+                    }
+                    val closing = text.lastIndexOf("</resources>")
+                    writeText(text.substring(0, closing) + elements + text.substring(closing))
+                }
+            }
+            // Switch in the Morphe settings (Player screen). Merged by Morphe's settings patch;
+            // without it the switch is absent and the default (on) is used.
+            val screen = "<screen key=\"$MUSIC_PLAYER_SETTINGS_SCREEN\">\n$ALBUM_ART_SWITCH\n</screen>"
+            val declaration = get(ADD_ON_PREFERENCES_FILE, false)
+            if (declaration.exists() && declaration.readText().contains("</morphe-add-on-preferences>")) {
+                declaration.writeText(
+                    declaration.readText().replace("</morphe-add-on-preferences>", "$screen\n</morphe-add-on-preferences>")
+                )
+            } else {
+                declaration.writeText(
+                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+                        "<morphe-add-on-preferences xmlns:android=\"http://schemas.android.com/apk/res/android\">\n" +
+                        "$screen\n</morphe-add-on-preferences>\n"
+                )
+            }
+        }
+
         // Rust stream proxy, stored as an asset for the ABIs the app already has.
         // The app installs with extractNativeLibs=false, which needs uncompressed libraries
         // in lib/, but the patcher compresses added files. The extension copies the
