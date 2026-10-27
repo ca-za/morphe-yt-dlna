@@ -134,3 +134,5 @@ local.properties
 /decompiled/
 *.apkm
 *.xapk
+/tools/
+/out/
