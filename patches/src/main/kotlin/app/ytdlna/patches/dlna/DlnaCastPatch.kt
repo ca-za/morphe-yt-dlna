@@ -24,8 +24,32 @@ private val PERMISSIONS = listOf(
     "android.permission.INTERNET",
 )
 
+private val NATIVE_ABIS = setOf("arm64-v8a", "armeabi-v7a", "x86_64")
+
+/** Loads a file bundled with the patches. */
+private object PatchResources {
+    fun open(path: String) = javaClass.getResourceAsStream(path)
+}
+
 private val dlnaManifestPatch = resourcePatch {
     execute {
+        // Rust stream proxy, stored as an asset for the ABIs the app already has.
+        // The app installs with extractNativeLibs=false, which needs uncompressed libraries
+        // in lib/, but the patcher compresses added files. The extension copies the
+        // library out of the assets and loads it at runtime instead.
+        val apkAbis = listApkEntries("lib/")
+            .map { it.removePrefix("lib/").substringBefore('/') }
+            .filter { it.isNotEmpty() }
+            .toSet()
+        val abis = if (apkAbis.isEmpty()) NATIVE_ABIS else NATIVE_ABIS intersect apkAbis
+        abis.forEach { abi ->
+            val library = PatchResources.open("/ytdlna/native/$abi/libytdlna.so") ?: return@forEach
+            get("assets/ytdlna/$abi/libytdlna.so", false).apply {
+                parentFile.mkdirs()
+                outputStream().use { out -> library.use { it.copyTo(out) } }
+            }
+        }
+
         document("AndroidManifest.xml").use { doc ->
             val existing = doc.getElementsByTagName("uses-permission").let { list ->
                 (0 until list.length).map { (list.item(it) as Element).getAttribute("android:name") }

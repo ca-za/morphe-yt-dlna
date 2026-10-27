@@ -214,10 +214,11 @@ public final class DlnaCast {
                     return;
                 }
 
-                StreamProxy proxy = StreamProxy.get();
+                int port = StreamProxy.start(app);
+                StreamProxy.register(info);
                 String host = prefs(app).getString(PREF_STREAM_HOST, "");
                 if (host.isEmpty()) host = StreamProxy.localAddressFor(device);
-                String url = "http://" + host + ":" + proxy.port() + media.path;
+                String url = "http://" + host + ":" + port + media.path;
                 Log.i("Casting " + info.videoId + " (" + media.description + ") to " + device + ": " + url);
 
                 DlnaController.play(device, url, media.mimeType, info.title, media.video);

@@ -1,0 +1,21 @@
+[package]
+name = "ytdlna-proxy"
+version = "0.1.0"
+edition = "2021"
+description = "Stream proxy that serves YouTube streams to DLNA renderers"
+license = "GPL-3.0-only"
+publish = false
+
+[lib]
+name = "ytdlna"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jni = { version = "0.21", default-features = false }
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

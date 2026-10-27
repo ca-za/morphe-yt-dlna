@@ -17,6 +17,24 @@ patches {
 // generatePatchesList task but never bundled into the APK.
 val patchListGeneratorClasspath = configurations.create("patchListGeneratorClasspath")
 
+// The Rust stream proxy, cross-compiled for Android and bundled as a patch resource.
+val nativeOutput = layout.buildDirectory.dir("generated/native")
+val buildNativeProxy = tasks.register<Exec>("buildNativeProxy") {
+    description = "Cross-compiles the Rust stream proxy for Android"
+    val script = rootProject.file("native/build-android.sh")
+    val outDir = nativeOutput.get().dir("ytdlna/native").asFile
+    inputs.dir(rootProject.file("native/ytdlna-proxy/src"))
+    inputs.files(
+        rootProject.file("native/ytdlna-proxy/Cargo.toml"),
+        rootProject.file("native/ytdlna-proxy/Cargo.lock"),
+        script,
+    )
+    outputs.dir(outDir)
+    commandLine(script.absolutePath, outDir.absolutePath)
+}
+sourceSets["main"].resources.srcDir(nativeOutput)
+tasks.named("processResources") { dependsOn(buildNativeProxy) }
+
 dependencies {
     compileOnly(libs.gson)
     patchListGeneratorClasspath(libs.gson)

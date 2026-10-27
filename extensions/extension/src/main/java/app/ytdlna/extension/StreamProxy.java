@@ -64,7 +64,45 @@ final class StreamProxy {
         acceptThread.start();
     }
 
-    static synchronized StreamProxy get() throws IOException {
+    /** Port of the running native proxy, or 0 if the Java proxy is used. */
+    private static int nativePort;
+
+    /**
+     * Starts the proxy if needed and returns its port. Uses the Rust proxy when its
+     * library is available, otherwise the Java implementation in this class.
+     */
+    static synchronized int start(android.content.Context context) throws IOException {
+        if (nativePort > 0) return nativePort;
+        if (instance == null && NativeProxy.load(context)) {
+            int port = NativeProxy.nativeStart(PREFERRED_PORT);
+            if (port > 0) {
+                nativePort = port;
+                Log.i("Using native stream proxy on port " + port);
+                return port;
+            }
+        }
+        return get().port();
+    }
+
+    /**
+     * Makes the streams of a video available. The Java proxy reads them from
+     * {@link StreamCapture} on demand, the native proxy needs them registered.
+     */
+    static void register(StreamInfo info) {
+        if (nativePort <= 0) return;
+        NativeProxy.nativeSetUserAgent(userAgent);
+        String prefix = "/v/" + info.videoId + "/";
+        NativeProxy.nativeRemovePrefix(prefix);
+        if (dash(info) != null) {
+            NativeProxy.nativePutText(prefix + "manifest.mpd", "application/dash+xml", manifest(info));
+        }
+        for (StreamInfo.Format format : info.formats) {
+            if (!format.hasUrl()) continue;
+            NativeProxy.nativePutStream(formatPath(info, format), format.container(), format.url, format.contentLength);
+        }
+    }
+
+    private static synchronized StreamProxy get() throws IOException {
         if (instance == null) {
             ServerSocket socket;
             try {
