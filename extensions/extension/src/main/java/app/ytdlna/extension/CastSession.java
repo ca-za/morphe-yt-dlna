@@ -71,6 +71,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         if (active != null) {
             active.stop(stopRenderer);
             active = null;
+            StreamProxy.stop();
         }
         CastUi.update();
     }

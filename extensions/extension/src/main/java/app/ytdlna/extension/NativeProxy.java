@@ -95,6 +95,9 @@ final class NativeProxy {
 
     static native void nativeSetUserAgent(String userAgent);
 
+    /** Closes the port and forgets everything registered; nativeStart opens it again. */
+    static native void nativeStop();
+
     /**
      * One format of a live stream under the directory {@code path}: {@code index.m3u8} (the
      * newest segments), {@code init.mp4} and {@code <sq>.m4s}, from the format's {@code url}.

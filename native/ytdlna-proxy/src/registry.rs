@@ -100,6 +100,10 @@ pub fn put_live_track(path: String, url: String, mime: String) {
     insert(path, Entry::LiveTrack(LiveTrack { url, mime, init: Mutex::new(None) }));
 }
 
+pub fn clear() {
+    map().write().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
 pub fn remove_prefix(prefix: &str) {
     let mut map = map().write().unwrap_or_else(|e| e.into_inner());
     map.retain(|path, _| !path.starts_with(prefix));

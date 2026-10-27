@@ -70,6 +70,13 @@ final class StreamProxy {
         return port;
     }
 
+    /** Closes the proxy after a cast: between casts nothing is reachable on the network. */
+    static synchronized void stop() {
+        if (port <= 0) return;
+        NativeProxy.nativeStop();
+        port = 0;
+    }
+
     /** Makes the streams of a video available to the renderer. */
     static void register(StreamInfo info) {
         NativeProxy.nativeSetUserAgent(userAgent);

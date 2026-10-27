@@ -2,7 +2,8 @@
 
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -13,29 +14,53 @@ use crate::http::{self, RangeResult, Request};
 use crate::registry::{self, Entry, Stream};
 use crate::upstream;
 
-static PORT: OnceLock<u16> = OnceLock::new();
+struct Running {
+    port: u16,
+    stop: Arc<AtomicBool>,
+}
 
-/// Starts the server once. Tries `preferred_port` first, then any free port.
+fn running() -> &'static Mutex<Option<Running>> {
+    static RUNNING: OnceLock<Mutex<Option<Running>>> = OnceLock::new();
+    RUNNING.get_or_init(|| Mutex::new(None))
+}
+
+/// Starts the server if it is not running. Tries `preferred_port` first, then any free port.
 pub fn start(preferred_port: u16) -> io::Result<u16> {
-    if let Some(port) = PORT.get() {
-        return Ok(*port);
+    let mut running = running().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(r) = running.as_ref() {
+        return Ok(r.port);
     }
     let listener = TcpListener::bind(("0.0.0.0", preferred_port))
         .or_else(|_| TcpListener::bind(("0.0.0.0", 0)))?;
     let port = listener.local_addr()?.port();
-    if PORT.set(port).is_err() {
-        // Lost a race with another start call; use the winner.
-        return Ok(*PORT.get().unwrap());
-    }
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = stop.clone();
     thread::Builder::new()
         .name("ytdlna-accept".into())
-        .spawn(move || accept_loop(listener))?;
+        .spawn(move || accept_loop(listener, stop_flag))?;
+    *running = Some(Running { port, stop });
     crate::info!("Native stream proxy listening on port {port}");
     Ok(port)
 }
 
-fn accept_loop(listener: TcpListener) {
+/// Closes the port and forgets everything registered: nothing is reachable on the network
+/// between casts. A later `start` opens it again.
+pub fn stop() {
+    let Some(r) = running().lock().unwrap_or_else(|e| e.into_inner()).take() else {
+        return;
+    };
+    r.stop.store(true, Ordering::SeqCst);
+    // Wakes the accept loop, which then ends and closes the listener.
+    let _ = TcpStream::connect(("127.0.0.1", r.port));
+    registry::clear();
+    crate::info!("Native stream proxy stopped");
+}
+
+fn accept_loop(listener: TcpListener, stop: Arc<AtomicBool>) {
     for connection in listener.incoming() {
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
         match connection {
             Ok(stream) => {
                 let _ = thread::Builder::new()

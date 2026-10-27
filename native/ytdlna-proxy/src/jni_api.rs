@@ -38,6 +38,11 @@ pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeStart(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeStop(_env: JNIEnv, _class: JClass) {
+    guarded((), server::stop);
+}
+
+#[no_mangle]
 pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeSetUserAgent(
     mut env: JNIEnv,
     _class: JClass,
