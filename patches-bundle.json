@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-10-28T23:45:12",
-  "description": "## [1.0.0-alpha.9](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.8...v1.0.0-alpha.9) (2026-10-28)\n\n### 🐛 Bug Fixes\n\n* captions for queued YouTube Music titles ([b40a4ed](https://github.com/ca-za/morphe-yt-dlna/commit/b40a4ed75ac0a10a2693f884ad72ea3e611ec8e7))\n\n### ✨ New Features\n\n* captions for renderers; fix seeking with the progress bar ([dc1b858](https://github.com/ca-za/morphe-yt-dlna/commit/dc1b858464ceb8be19f696f6bb9a809ee8604f94))",
-  "download_url": "https://github.com/ca-za/morphe-yt-dlna/releases/download/v1.0.0-alpha.9/patches-1.0.0-alpha.9.mpp",
+  "created_at": "2026-10-28T23:58:21",
+  "description": "## 0.1.0-alpha (2026-10-28)\n\nFirst release with the new version numbering (formerly 1.0.0-alpha.1 to 1.0.0-alpha.9).",
+  "download_url": "https://github.com/ca-za/morphe-yt-dlna/releases/download/v0.1.0-alpha/patches-0.1.0-alpha.mpp",
   "signature_download_url": "",
-  "version": "1.0.0-alpha.9"
+  "version": "0.1.0-alpha"
 }

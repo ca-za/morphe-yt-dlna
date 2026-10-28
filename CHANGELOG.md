@@ -1,3 +1,7 @@
+## 0.1.0-alpha (2026-10-28)
+
+First release with the new version numbering (formerly 1.0.0-alpha.1 to 1.0.0-alpha.9).
+
 ## [1.0.0-alpha.9](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.8...v1.0.0-alpha.9) (2026-10-28)
 
 ### 🐛 Bug Fixes
