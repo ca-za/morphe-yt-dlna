@@ -1,3 +1,10 @@
+## [1.0.0-alpha.3](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.2...v1.0.0-alpha.3) (2026-10-28)
+
+### 🐛 Bug Fixes
+
+* follow the app's media session without its notification ([cb4f7cf](https://github.com/ca-za/morphe-yt-dlna/commit/cb4f7cfa3f0ef076d2f25d40e0c81bf66c64715f))
+* renderer follows skips right after the cast start ([29925c0](https://github.com/ca-za/morphe-yt-dlna/commit/29925c0f15499c4724891894d47e5d05042e3f77))
+
 ## [1.0.0-alpha.2](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.1...v1.0.0-alpha.2) (2026-10-27)
 
 ### 🐛 Bug Fixes
