@@ -156,6 +156,9 @@ def cast_button(ctx: Context) -> Result:
         # The player fades its buttons out after a few seconds: measure again before a second try.
         opened = None
         for _ in range(2):
+            # A sheet over the player (bedtime reminder) would take the tap.
+            if ctx.ui.dismiss_dialogs():
+                node = _find_cast_button(ctx) or node
             ctx.ui.tap(node)
             opened = ctx.ui.wait(6, contains=ctx.renderer.name)
             if opened:
@@ -474,9 +477,11 @@ def volume_keys(ctx: Context) -> Result:
     # Keys go to the focused window: a dialog over the app would get them.
     ctx.ui.dismiss_dialogs()
     before = ctx.renderer.volume()
-    ctx.phone.key("KEYCODE_VOLUME_UP")
+    # At the top already (a real TV may be there): down first, then back up.
+    first, back = ("KEYCODE_VOLUME_DOWN", "KEYCODE_VOLUME_UP") if before >= 95 else ("KEYCODE_VOLUME_UP", "KEYCODE_VOLUME_DOWN")
+    ctx.phone.key(first)
     after = until(lambda: (lambda v: v if v != before else None)(ctx.renderer.volume()), 5)
-    ctx.phone.key("KEYCODE_VOLUME_DOWN")
+    ctx.phone.key(back)
     return Result("pass" if after else "fail", f"{before} -> {after if after else ctx.renderer.volume()}")
 
 
@@ -641,9 +646,13 @@ def live_hls(ctx: Context) -> Result:
     ctx.facts["video_id"] = LIVE_VIDEO
     ctx.facts.pop("title", None)
     try:
+        # Sheets over the player (bedtime reminder, notices) pause it; that pause would be cast.
+        ctx.ui.dismiss_dialogs()
         started = start_cast(ctx)
         if started.status != "pass":
             return Result("fail", f"cast start: {started.detail}")
+        if ctx.ui.dismiss_dialogs():
+            ctx.control.local("play")
         evidence = {"format": started.detail}
         if "Live HLS" not in started.detail:
             return Result("fail", f"not cast as live HLS ({started.detail})", evidence)
@@ -766,6 +775,14 @@ def no_crash(ctx: Context) -> Result:
     return Result(status, ("" if ours else "not in our code: ") + reason.split("AndroidRuntime: ")[-1][:160],
                   {"lines": stack[:30]})
 
+
+def media_session(ctx: Context) -> Result:
+    """The cast session followed the app's media session (local controls, queue, playlist)."""
+    if not ctx.logs.find_all(r"Cast session started"):
+        return Result("skip", "no cast session in this run")
+    missing = ctx.logs.find_all(r"App media session not found")
+    return Result("fail" if missing else "pass", "app media session not found" if missing else "")
+
 # endregion
 
 
@@ -797,6 +814,7 @@ SCENARIOS = [
     ("hls_playback", hls_playback, {"yt"}),
     ("live_hls", live_hls, {"yt"}),
     ("avtransport_next", avtransport_next, {"music"}),
+    ("media_session", media_session, {"yt", "music"}),
     ("no_crash", no_crash, {"yt", "music"}),
 ]
 # Without these, the remaining scenarios can not run.

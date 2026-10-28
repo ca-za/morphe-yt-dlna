@@ -214,11 +214,18 @@ class Ui:
                 or next((n for n in nodes if n.text in ("Allow", "Zulassen")
                          and "permissioncontroller" in n.package), None)
             if not hit:
-                sheet = next((n for title in self.DISMISS_BY_BACK for n in nodes if n.text == title), None)
+                # The bedtime sheet: its title may be in text or description; its "Remind me
+                # again" button is the sure sign. Closed with its close button, else with Back.
+                sheet = next((n for n in nodes if n.text in self.DISMISS_BY_BACK or n.desc in self.DISMISS_BY_BACK
+                              or n.desc in ("Remind me again", "Später erinnern")), None)
                 if not sheet:
                     break
-                self.device.key("KEYCODE_BACK")
-                tapped.append(sheet.text)
+                close = next((n for n in nodes if n.resource_id.endswith(":id/close_button")), None)
+                if close:
+                    self.tap(close)
+                else:
+                    self.device.key("KEYCODE_BACK")
+                tapped.append(sheet.text or sheet.desc)
                 time.sleep(1.5)
                 continue
             self.tap(hit)

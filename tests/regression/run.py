@@ -51,7 +51,8 @@ def main() -> int:
     print(f"Reports: {run_dir}")
 
     if args.skip_build:
-        bundle = sorted((build.ROOT / "patches/build/libs").glob("patches-*.mpp"))[-1]
+        bundle = max((b for b in (build.ROOT / "patches/build/libs").glob("patches-*.mpp")
+                      if not b.name.endswith("-sources.mpp")), key=lambda b: b.stat().st_mtime)
     else:
         print("Building patch bundle ...", flush=True)
         bundle = build.build_bundle()

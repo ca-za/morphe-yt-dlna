@@ -79,7 +79,7 @@ def build_bundle() -> Path:
     subprocess.run(["./gradlew", "buildAndroid", "--console=plain", "-q"], cwd=ROOT, env=secrets, check=True)
     # The Gradle and Kotlin daemons hold several GB; the emulators need that memory.
     subprocess.run(["./gradlew", "--stop", "-q"], cwd=ROOT, env=secrets, check=False)
-    return sorted((ROOT / "patches/build/libs").glob("patches-*.mpp"))[-1]
+    return max((b for b in (ROOT / "patches/build/libs").glob("patches-*.mpp") if not b.name.endswith("-sources.mpp")), key=lambda b: b.stat().st_mtime)
 
 
 def patch(apk: ApkInfo, bundle: Path, out_dir: Path) -> PatchResult:
