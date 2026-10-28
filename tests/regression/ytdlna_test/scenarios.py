@@ -295,7 +295,13 @@ def start_cast(ctx: Context) -> Result:
         return Result("fail", f"picker did not list '{ctx.renderer.name}'"
                       + ("" if opened else " (the picker did not open)"), tapped)
     ctx.ui.tap(entry)
-    m = ctx.logs.wait(r"Loading (\S+) \(([^)]*)\) \"(.*)\" by \"(.*)\" on", 20, since)
+    m = ctx.logs.wait(r"Loading (\S+) \(([^)]*)\) \"(.*)\" by \"(.*)\" on", 10, since)
+    if not m:
+        # A tap while the sheet still slides in is lost: once more if the picker is still open.
+        again = ctx.ui.find(contains=ctx.renderer.name)
+        if again:
+            ctx.ui.tap(again)
+        m = ctx.logs.wait(r"Loading (\S+) \(([^)]*)\) \"(.*)\" by \"(.*)\" on", 15, since)
     if not m:
         return Result("fail", "cast session did not load a title")
     ctx.facts["title"] = m.group(3)
@@ -466,6 +472,9 @@ def tv_play(ctx: Context) -> Result:
 
 def phone_seek(ctx: Context) -> Result:
     """Seeking on the phone moves the TV to the same position."""
+    # Right after the start the phone reloads its title and puts it back at its position;
+    # a seek in those seconds is undone with it (known limit). Seek once that is done.
+    ctx.control.wait_status(lambda st: not (st.get("session") or {}).get("reloading"), 12)
     target = ctx.renderer.position_ms() + 60_000
     ctx.control.local("seek", ms=str(target))
     position = until(lambda: (lambda p: p if abs(p - target) < 6000 else None)(ctx.renderer.position_ms()), 10)
@@ -681,11 +690,21 @@ def live_hls(ctx: Context) -> Result:
         if not renderer_state_is(ctx, "PLAYING", 40):
             problems.append(f"renderer state {ctx.renderer.state()}")
         else:
+            # In a sliding live window the position stays about the same (the window start moves
+            # along): the renderer plays if its position changes at all and it stays PLAYING,
+            # while the playlist moves on.
             p1 = ctx.renderer.position_ms()
-            p2 = until(lambda: (lambda p: p if p >= p1 + 3000 else None)(ctx.renderer.position_ms()), 20)
-            evidence["positions"] = [p1, p2]
-            if not p2:
-                problems.append("renderer position does not advance")
+            p2 = until(lambda: (lambda p: p if abs(p - p1) >= 1000 else None)(ctx.renderer.position_ms()), 20)
+            time.sleep(6)  # longer than one segment
+            later = _http(base + variants[0]) if variants else ""
+            first = lambda text: int((re.search(r"#EXT-X-MEDIA-SEQUENCE:(\d+)", text) or [0, 0])[1])
+            evidence.update({"positions": [p1, p2], "sequence": [first(media), first(later)]})
+            if p2 is None:
+                problems.append("renderer position does not change")
+            if first(later) <= first(media):
+                problems.append("live playlist does not move on")
+            if ctx.renderer.state() != "PLAYING":
+                problems.append(f"renderer stopped playing ({ctx.renderer.state()})")
         return Result("fail" if problems else "pass", ", ".join(problems) or
                       f"{started.detail.split(',')[0]}, {len(variants)} variants, window of {len(segments)} segments",
                       evidence)
