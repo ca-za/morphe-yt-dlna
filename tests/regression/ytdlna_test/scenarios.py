@@ -229,18 +229,22 @@ def cast_button_follows(ctx: Context) -> Result:
 GOOGLE_CAST_DIALOG = ["Select a device", "Gerät auswählen"]
 
 
+def _open_picker(ctx: Context):
+    """Opens the DLNA picker and waits for the renderer in it."""
+    if ctx.app == "music":
+        button = _find_cast_button(ctx)
+        if button:
+            ctx.ui.tap(button)
+    else:
+        # YouTube: through the share menu, where no cast button is involved.
+        ctx.phone.sh(f"am start -n {ctx.package}/{SHARE_ACTIVITY} -a android.intent.action.SEND "
+                     f"-t text/plain --es android.intent.extra.TEXT 'https://youtu.be/{ctx.video_id}'")
+    return ctx.ui.wait(10, contains=ctx.renderer.name)
+
+
 def google_cast_link(ctx: Context) -> Result:
     """The link to the app's Google Cast dialog in the DLNA picker follows its setting (off by default)."""
-    def open_picker():
-        if ctx.app == "music":
-            button = _find_cast_button(ctx)
-            if button:
-                ctx.ui.tap(button)
-        else:
-            # YouTube: through the share menu, where no cast button is involved.
-            ctx.phone.sh(f"am start -n {ctx.package}/{SHARE_ACTIVITY} -a android.intent.action.SEND "
-                         f"-t text/plain --es android.intent.extra.TEXT 'https://youtu.be/{ctx.video_id}'")
-        return ctx.ui.wait(10, contains=ctx.renderer.name)
+    open_picker = lambda: _open_picker(ctx)
 
     ctx.control.cmd("setup", googleCastLink="false")
     if not open_picker():
@@ -268,6 +272,50 @@ def google_cast_link(ctx: Context) -> Result:
     problems = [p for p, bad in [("link shown while off", off), ("link missing while on", not link),
                                  ("the link did not open the Google Cast dialog", link and not dialog)] if bad]
     return Result("fail" if problems else "pass", ", ".join(problems) or f"opens \"{dialog}\"")
+
+
+def manual_devices(ctx: Context) -> Result:
+    """Renderers added by address are marked as such, also when unreachable, and can be removed."""
+    unreachable = "http://10.0.2.2:9/description.xml"
+    ctx.control.cmd("setup", device=f"{ctx.renderer_device_url}|{unreachable}")
+    since = ctx.logs.mark()
+    try:
+        if not _open_picker(ctx):
+            return Result("fail", "picker did not open")
+        marked = until(lambda: ctx.ui.find(contains="DLNA · manual · ") or ctx.ui.find(contains="DLNA · manuell · "), 5)
+        listed = (ctx.ui.wait(15, contains="Manual · unreachable") or ctx.ui.wait(1, contains="Manuell · nicht erreichbar"))
+        removed = renderer_kept = False
+        confirm = None
+        tries = []
+        if listed:
+            # A tap while the list is rebuilt (a renderer answering) is lost: try again.
+            for _ in range(3):
+                dead = ctx.ui.find(contains="Manual · unreachable") or ctx.ui.find(contains="Manuell · nicht erreichbar")
+                buttons = [n for n in ctx.ui.dump() if n.desc in ("Remove", "Entfernen")]
+                tries.append({"row": dead and dead.bounds, "buttons": [b.bounds for b in buttons]})
+                if not dead or not buttons:
+                    break
+                # The delete button in the same row as the unreachable entry.
+                ctx.ui.tap(min(buttons, key=lambda n: abs(n.center[1] - dead.center[1])))
+                # Dumps are slow while the search spinner turns: wait long enough for the dialog.
+                confirm = ctx.ui.wait(12, text="Remove") or ctx.ui.wait(1, text="Entfernen")
+                if confirm:
+                    break
+        if confirm:
+            ctx.ui.tap(confirm)
+            removed = bool(ctx.logs.wait(r"Removed saved device " + re.escape(unreachable), 5, since))
+            gone = until(lambda: not (ctx.ui.find(contains="Manual · unreachable")
+                                      or ctx.ui.find(contains="Manuell · nicht erreichbar")), 5)
+            removed = removed and bool(gone)
+            renderer_kept = bool(ctx.ui.find(contains=ctx.renderer.name))
+        _close_picker(ctx)
+    finally:
+        ctx.control.cmd("setup", device=ctx.renderer_device_url)
+    problems = [p for p, bad in [("renderer not marked as manual", not marked),
+                                 ("unreachable entry not listed", not listed),
+                                 ("unreachable entry not removed", listed and not removed),
+                                 ("renderer gone after removing another entry", removed and not renderer_kept)] if bad]
+    return Result("fail" if problems else "pass", ", ".join(problems), {"tries": tries})
 
 
 def start_cast(ctx: Context) -> Result:
@@ -813,6 +861,7 @@ SCENARIOS = [
     ("cast_button", cast_button, {"yt", "music"}),
     ("cast_button_follows", cast_button_follows, {"music"}),
     ("google_cast_link", google_cast_link, {"yt", "music"}),
+    ("manual_devices", manual_devices, {"yt", "music"}),
     ("start_cast", start_cast, {"yt", "music"}),
     ("renderer_plays", renderer_plays, {"yt", "music"}),
     ("renderer_metadata", renderer_metadata, {"yt", "music"}),

@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  * the title with a spinner while searching, the devices and then the actions, each with an icon.
  */
 final class DevicePicker {
-    enum Icon {TV, CAST, ADD, STOP, LINK, NONE}
+    enum Icon {TV, CAST, ADD, STOP, LINK, DELETE, NONE}
 
     static final class Row {
         final Icon icon;
@@ -45,12 +45,19 @@ final class DevicePicker {
         final String subtitle;
         /** Null: shown as a note, not clickable. */
         final Runnable onClick;
+        /** Non-null: a delete button at the end of the row. */
+        final Runnable onDelete;
 
         Row(Icon icon, String text, String subtitle, Runnable onClick) {
+            this(icon, text, subtitle, onClick, null);
+        }
+
+        Row(Icon icon, String text, String subtitle, Runnable onClick, Runnable onDelete) {
             this.icon = icon;
             this.text = text;
             this.subtitle = subtitle;
             this.onClick = onClick;
+            this.onDelete = onDelete;
         }
     }
 
@@ -179,6 +186,17 @@ final class DevicePicker {
             texts.addView(subtitle);
         }
         view.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        if (row.onDelete != null) {
+            ImageView delete = new ImageView(activity);
+            delete.setImageDrawable(new IconDrawable(Icon.DELETE, secondaryColor));
+            delete.setContentDescription(DlnaCast.t("Entfernen", "Remove"));
+            delete.setPadding(dp(12), dp(12), dp(12), dp(12));
+            delete.setBackground(new RippleDrawable(ColorStateList.valueOf(dark ? 0x33FFFFFF : 0x1F000000), null, null));
+            delete.setOnClickListener(v -> row.onDelete.run());
+            LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+            deleteParams.rightMargin = -dp(12);
+            view.addView(delete, deleteParams);
+        }
         return view;
     }
 
@@ -202,6 +220,9 @@ final class DevicePicker {
                 return "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z";
             case STOP:
                 return "M6 6h12v12H6z";
+            case DELETE:
+                return "M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1z"
+                        + "M18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z";
             case LINK:
                 return "M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7"
                         + "c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1"

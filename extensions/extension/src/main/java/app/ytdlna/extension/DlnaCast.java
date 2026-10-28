@@ -255,14 +255,57 @@ public final class DlnaCast {
             picker[0].dismiss();
             action.run();
         };
+        // Renderers added by address: which ones answered, and the key each one is listed under.
+        Set<String> manual = savedDevices(activity);
+        Set<String> unreachable = new HashSet<>();
+        java.util.Map<String, String> manualByKey = new java.util.HashMap<>();
+        // Keys found by a search, so they stay listed when their saved address is removed.
+        Set<String> discovered = new HashSet<>();
+        Runnable[] rebuildRef = new Runnable[1];
+        java.util.function.Consumer<String> remove = location -> {
+            String name = location;
+            for (DlnaDevice device : devices) {
+                if (location.equals(manualLocation(device, manual, manualByKey))) name = device.friendlyName;
+            }
+            new AlertDialog.Builder(activity, dialogTheme(activity))
+                    .setTitle(t("Gerät entfernen?", "Remove device?"))
+                    .setMessage(t("„" + name + "“ wird aus den manuell hinzugefügten Geräten entfernt.\n\n",
+                            "\"" + name + "\" is removed from the devices added by address.\n\n") + location)
+                    .setPositiveButton(t("Entfernen", "Remove"), (d, w) -> {
+                        forgetDevice(activity, location);
+                        manual.remove(location);
+                        unreachable.remove(location);
+                        for (java.util.Iterator<DlnaDevice> it = devices.iterator(); it.hasNext(); ) {
+                            DlnaDevice device = it.next();
+                            String key = deviceKey(device);
+                            if (!location.equals(device.location) && !location.equals(manualByKey.get(key))) continue;
+                            manualByKey.remove(key);
+                            if (!discovered.contains(key)) {
+                                it.remove();
+                                seen.remove(key);
+                            }
+                        }
+                        rebuildRef[0].run();
+                    })
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+        };
         Runnable rebuild = () -> {
             List<DevicePicker.Row> rows = new ArrayList<>();
             CastSession session = CastSession.active();
             for (DlnaDevice device : devices) {
                 boolean connected = session != null && session.device.location.equals(device.location);
-                rows.add(new DevicePicker.Row(DevicePicker.Icon.TV, device.friendlyName,
-                        connected ? t("Verbunden", "Connected") : "DLNA · " + device.host(),
-                        choose.apply(() -> cast(activity, device, current))));
+                String location = manualLocation(device, manual, manualByKey);
+                String subtitle = connected ? t("Verbunden", "Connected")
+                        : "DLNA · " + (location != null ? t("manuell · ", "manual · ") : "") + device.host();
+                rows.add(new DevicePicker.Row(DevicePicker.Icon.TV, device.friendlyName, subtitle,
+                        choose.apply(() -> cast(activity, device, current)),
+                        location == null ? null : () -> remove.accept(location)));
+            }
+            for (String location : unreachable) {
+                rows.add(new DevicePicker.Row(DevicePicker.Icon.TV, hostOf(location),
+                        t("Manuell · nicht erreichbar", "Manual · unreachable"), null,
+                        () -> remove.accept(location)));
             }
             if (!searching[0] && devices.isEmpty()) {
                 rows.add(new DevicePicker.Row(DevicePicker.Icon.NONE,
@@ -300,33 +343,80 @@ public final class DlnaCast {
             picker[0].setSearching(searching[0]);
             picker[0].setRows(rows);
         };
+        rebuildRef[0] = rebuild;
         rebuild.run();
         picker[0].show();
 
         DlnaDiscovery.Listener onDevice = device -> main.post(() -> {
-            String key = device.udn.isEmpty() ? device.location : device.udn;
-            if (!seen.add(key)) return;
+            if (!seen.add(deviceKey(device))) return;
             devices.add(device);
             rebuild.run();
         });
+        DlnaDiscovery.Listener onSearched = device -> {
+            main.post(() -> discovered.add(deviceKey(device)));
+            onDevice.onDevice(device);
+        };
         // Renderers found in the background are listed right away; the search below adds new ones.
-        for (DlnaDevice device : RendererScanner.devices()) onDevice.onDevice(device);
+        for (DlnaDevice device : RendererScanner.devices()) {
+            if (RendererScanner.wasSearched(device)) discovered.add(deviceKey(device));
+            onDevice.onDevice(device);
+        }
         background.execute(() -> {
-            for (String location : prefs(activity).getStringSet(PREF_MANUAL_DEVICES, new HashSet<>())) {
+            for (String location : new ArrayList<>(manual)) {
                 background.execute(() -> {
                     try {
-                        onDevice.onDevice(DlnaDevice.load(location));
+                        DlnaDevice device = DlnaDevice.load(location);
+                        main.post(() -> {
+                            if (!manual.contains(location)) return;
+                            manualByKey.put(deviceKey(device), location);
+                            rebuild.run();
+                        });
+                        onDevice.onDevice(device);
                     } catch (Exception e) {
                         Log.d("Saved device unreachable: " + location + " " + e.getMessage());
+                        main.post(() -> {
+                            if (!manual.contains(location)) return;
+                            unreachable.add(location);
+                            rebuild.run();
+                        });
                     }
                 });
             }
-            DlnaDiscovery.search(activity, SEARCH_MS, onDevice);
+            DlnaDiscovery.search(activity, SEARCH_MS, onSearched);
             main.post(() -> {
                 searching[0] = false;
                 rebuild.run();
             });
         });
+    }
+
+    private static String deviceKey(DlnaDevice device) {
+        return device.udn.isEmpty() ? device.location : device.udn;
+    }
+
+    /** The saved address a listed renderer was added by, null if it was only found by a search. */
+    private static String manualLocation(DlnaDevice device, Set<String> manual, java.util.Map<String, String> byKey) {
+        if (manual.contains(device.location)) return device.location;
+        return byKey.get(deviceKey(device));
+    }
+
+    private static String hostOf(String location) {
+        try {
+            java.net.URL url = new java.net.URL(location);
+            return url.getPort() < 0 ? url.getHost() : url.getHost() + ":" + url.getPort();
+        } catch (Exception e) {
+            return location;
+        }
+    }
+
+    /** Removes a renderer added by address. */
+    private static void forgetDevice(Context context, String location) {
+        SharedPreferences prefs = prefs(context);
+        Set<String> saved = new HashSet<>(prefs.getStringSet(PREF_MANUAL_DEVICES, new HashSet<>()));
+        saved.remove(location);
+        prefs.edit().putStringSet(PREF_MANUAL_DEVICES, saved).apply();
+        Log.i("Removed saved device " + location);
+        RendererScanner.forget(location);
     }
 
     private static void cast(Activity activity, DlnaDevice device, StreamInfo info) {

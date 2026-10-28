@@ -125,15 +125,15 @@ final class TestHooks {
             result.put("cmd", cmd);
             switch (cmd == null ? "" : cmd) {
                 case "setup": {
-                    // Saved renderer and stream address, as the dialogs would store them.
+                    // Saved renderers ("|" between several) and stream address, as the dialogs
+                    // would store them.
                     String device = intent.getStringExtra("device");
                     String host = intent.getStringExtra("host");
                     android.content.SharedPreferences prefs =
                             context.getSharedPreferences("ytdlna", Context.MODE_PRIVATE);
                     android.content.SharedPreferences.Editor editor = prefs.edit();
                     if (device != null) {
-                        Set<String> devices = new HashSet<>();
-                        devices.add(device);
+                        Set<String> devices = new HashSet<>(java.util.Arrays.asList(device.split("\\|")));
                         editor.putStringSet("manual_devices", devices);
                     }
                     if (host != null) editor.putString("stream_host", host);

@@ -192,6 +192,26 @@ final class RendererScanner {
         if (changed) main.post(DlnaCast::onRenderersChanged);
     }
 
+    /** Whether the SSDP search found this renderer (not only its saved address). */
+    static synchronized boolean wasSearched(DlnaDevice device) {
+        return searched.contains(key(device));
+    }
+
+    /** A saved address was removed: drop its renderer unless the search finds it too. */
+    static void forget(String location) {
+        boolean changed;
+        synchronized (RendererScanner.class) {
+            boolean before = !available.isEmpty();
+            for (String key : new ArrayList<>(available.keySet())) {
+                if (searched.contains(key) || !location.equals(available.get(key).location)) continue;
+                available.remove(key);
+                misses.remove(key);
+            }
+            changed = before != !available.isEmpty();
+        }
+        if (changed) main.post(DlnaCast::onRenderersChanged);
+    }
+
     private static String key(DlnaDevice device) {
         return device.udn.isEmpty() ? device.location : device.udn;
     }
