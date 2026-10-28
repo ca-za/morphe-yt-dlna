@@ -17,6 +17,10 @@ final class Track {
     long durationMs;
     /** URL of the renderer extras (see RendererExtras), empty when the renderer did not ask. */
     String extrasUrl = "";
+    /** Caption files for the renderer (see Captions), empty if none. */
+    String captionSrt = "", captionVtt = "";
+    /** Announce the SRT file Samsung's way as well. */
+    boolean captionSamsung;
 
     /** Casting from YouTube Music: videos are music videos. Set when a session starts. */
     static volatile boolean musicApp;

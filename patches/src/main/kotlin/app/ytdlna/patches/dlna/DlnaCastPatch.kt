@@ -29,6 +29,7 @@ private const val MUSIC_MODE_CLASS = "Lapp/ytdlna/extension/MusicMode;"
 private const val AUDIO_CLASS = "Lapp/ytdlna/extension/CastAudio;"
 private const val TEST_HOOKS_CLASS = "Lapp/ytdlna/extension/TestHooks;"
 private const val INTENTS_CLASS = "Lapp/ytdlna/extension/PlayerIntents;"
+private const val CAPTIONS_CLASS = "Lapp/ytdlna/extension/Captions;"
 private const val AUDIO_TRACK = "Landroid/media/AudioTrack;"
 private const val MEDIA_SESSION = "Landroid/media/session/MediaSession;"
 
@@ -97,6 +98,14 @@ private val GOOGLE_CAST_LINK_SWITCH = """
         android:defaultValue="false" />
 """.trimIndent()
 
+private val CAPTIONS_SWITCH = """
+    <SwitchPreference
+        android:key="ytdlna_captions"
+        android:title="@string/ytdlna_captions_title"
+        android:summary="@string/ytdlna_captions_summary"
+        android:defaultValue="true" />
+""".trimIndent()
+
 private val DEBUG_LOG_SWITCH = """
     <SwitchPreference
         android:key="ytdlna_debug_log"
@@ -111,6 +120,9 @@ private val STRINGS = mapOf(
         "ytdlna_google_cast_link_title" to "DLNA: Google Cast in the device list",
         "ytdlna_google_cast_link_summary" to "Shows “Google Cast…” in the DLNA device list (also when " +
             "opened from the share menu), leading to the app's own cast dialog.",
+        "ytdlna_captions_title" to "DLNA: Captions",
+        "ytdlna_captions_summary" to "Sends the video's captions (in the phone's language) to renderers that " +
+            "can show them. Other renderers are not affected.",
         "ytdlna_debug_log_title" to "DLNA: Debug log",
         "ytdlna_debug_log_summary" to "Shows “Share debug log” in the DLNA device list and records " +
             "extra details (such as SponsorBlock skips on the TV). For bug reports.",
@@ -119,6 +131,9 @@ private val STRINGS = mapOf(
         "ytdlna_google_cast_link_title" to "DLNA: Google Cast in der Geräteauswahl",
         "ytdlna_google_cast_link_summary" to "Zeigt „Google Cast…“ in der DLNA-Geräteauswahl (auch beim " +
             "Öffnen über Teilen); führt zum Cast-Dialog der App.",
+        "ytdlna_captions_title" to "DLNA: Untertitel",
+        "ytdlna_captions_summary" to "Sendet die Untertitel des Videos (in der Sprache des Handys) an Geräte, " +
+            "die sie anzeigen können. Andere Geräte sind nicht betroffen.",
         "ytdlna_debug_log_title" to "DLNA: Debug-Log",
         "ytdlna_debug_log_summary" to "Zeigt „Debug-Log teilen“ in der DLNA-Geräteauswahl und zeichnet " +
             "zusätzliche Details auf (etwa SponsorBlock-Sprünge auf dem Fernseher). Für Fehlerberichte.",
@@ -185,9 +200,9 @@ private val dlnaManifestPatch = resourcePatch {
         // without it the switches are absent and their defaults are used.
         run {
             val screen = if (isMusic) {
-                "<screen key=\"$MUSIC_PLAYER_SETTINGS_SCREEN\">\n$ALBUM_ART_SWITCH\n$GOOGLE_CAST_LINK_SWITCH\n$DEBUG_LOG_SWITCH\n</screen>"
+                "<screen key=\"$MUSIC_PLAYER_SETTINGS_SCREEN\">\n$ALBUM_ART_SWITCH\n$GOOGLE_CAST_LINK_SWITCH\n$CAPTIONS_SWITCH\n$DEBUG_LOG_SWITCH\n</screen>"
             } else {
-                "<screen key=\"$YOUTUBE_PLAYER_SETTINGS_SCREEN\">\n$GOOGLE_CAST_LINK_SWITCH\n$DEBUG_LOG_SWITCH\n</screen>"
+                "<screen key=\"$YOUTUBE_PLAYER_SETTINGS_SCREEN\">\n$GOOGLE_CAST_LINK_SWITCH\n$CAPTIONS_SWITCH\n$DEBUG_LOG_SWITCH\n</screen>"
             }
             val declaration = get(ADD_ON_PREFERENCES_FILE, false)
             if (declaration.exists() && declaration.readText().contains("</morphe-add-on-preferences>")) {
@@ -350,6 +365,7 @@ val dlnaCastPatch = bytecodePatch(
                     invoke-interface/range { $model .. $model }, $getVideoId
                     move-result-object v0
                     invoke-static { v0 }, $CAPTURE_CLASS->onVideoLoaded(Ljava/lang/String;)V
+                    invoke-static/range { $model .. $model }, $CAPTIONS_CLASS->onPlayerResponse(Ljava/lang/Object;)V
                     :no_model
                     nop
                 """

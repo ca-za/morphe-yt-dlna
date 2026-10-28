@@ -133,7 +133,8 @@ final class DlnaController {
         item.append("<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" ")
                 .append("xmlns:dc=\"http://purl.org/dc/elements/1.1/\" ")
                 .append("xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" ")
-                .append("xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\">")
+                .append("xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\"")
+                .append(track.captionSamsung ? " xmlns:sec=\"http://www.sec.co.kr/\">" : ">")
                 .append("<item id=\"ytdlna-").append(escape(track.videoId))
                 .append("\" parentID=\"0\" restricted=\"1\">")
                 .append("<dc:title>").append(escape(track.title)).append("</dc:title>");
@@ -160,6 +161,17 @@ final class DlnaController {
             item.append(" duration=\"").append(Track.upnpTime(track.durationMs)).append(".000\"");
         }
         item.append(">").append(escape(uri)).append("</res>");
+        // Captions as extra resources after the media (renderers that read only the first one
+        // are not affected), and Samsung's way.
+        if (!track.captionSrt.isEmpty()) {
+            item.append("<res protocolInfo=\"http-get:*:text/srt:*\">").append(escape(track.captionSrt)).append("</res>");
+        }
+        if (!track.captionVtt.isEmpty()) {
+            item.append("<res protocolInfo=\"http-get:*:text/vtt:*\">").append(escape(track.captionVtt)).append("</res>");
+        }
+        if (track.captionSamsung && !track.captionSrt.isEmpty()) {
+            item.append("<sec:CaptionInfoEx sec:type=\"srt\">").append(escape(track.captionSrt)).append("</sec:CaptionInfoEx>");
+        }
         if (!track.extrasUrl.isEmpty()) item.append(RendererExtras.didlDesc(track.videoId, track.extrasUrl));
         item.append("</item></DIDL-Lite>");
         return item.toString();

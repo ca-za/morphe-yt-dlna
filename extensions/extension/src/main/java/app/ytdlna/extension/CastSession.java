@@ -124,6 +124,10 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private SponsorBlock.Segment tvSegment;
     private long tvEnteredAt, tvEnteredPosition;
     private volatile boolean sbWatchQueued;
+    /** Commands are held back until the renderer settled after a load. */
+    private volatile long rendererSettleUntil;
+    /** Only the latest held back command is sent (main thread). */
+    private int deferredIntent;
     /** Length of the title the extras are published for. */
     private volatile long extrasDurationMs;
     /** The extras document is complete after this, with the segments Morphe has by then. */
@@ -251,6 +255,17 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     void onIntent(String kind, long positionMs, String caller) {
         if (stopped || loadedVideoId == null) return;
         if (sidePlayerInFront()) return;
+        long settle = rendererSettleUntil - SystemClock.elapsedRealtime();
+        if (settle > 0) {
+            // The renderer is still loading the title: a command now can stop it (some report
+            // STOPPED). The latest command goes once it has settled.
+            int generation = ++deferredIntent;
+            Log.d("Phone " + kind + " while the renderer loads, sent in " + settle + " ms");
+            main.postDelayed(() -> {
+                if (generation == deferredIntent) onIntent(kind, positionMs, caller);
+            }, settle);
+            return;
+        }
         switch (kind) {
             case "seek":
                 // A position only means something on the cast title, and not while the phone
@@ -396,6 +411,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 LocalPlayer.QueueEntry entry = local.entry(info.videoId);
                 if (track.artist.isEmpty() && entry != null) track.artist = entry.artist;
                 String art = covers.forTrack(track, true);
+                RendererExtras.baseUrl = r.baseUrl;
+                if (Captions.enabled(context) && !audioOnly()) addCaptions(info.videoId, track, r.baseUrl);
                 if (RendererExtras.wanted(device)) {
                     // Published before the load, so the renderer finds it right away.
                     track.extrasUrl = r.baseUrl + RendererExtras.path(info.videoId);
@@ -413,6 +430,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
 
                 ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
                 r.expectEcho(RENDERER_LOAD_SETTLE_MS);
+                rendererSettleUntil = SystemClock.elapsedRealtime() + RENDERER_LOAD_SETTLE_MS;
                 r.load(new Renderer.Load(info, media, track, art, queue));
                 loadedVideoId = info.videoId;
                 // Checked once the load has settled (states before are ignored as its echo).
@@ -436,6 +454,27 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 if (info.videoId.equals(loadingVideoId)) loadingVideoId = null;
             }
         });
+    }
+
+    /**
+     * Captions for renderers that take them: an extra SRT or WebVTT resource (when the renderer
+     * lists the format), Samsung's caption info, and all tracks in the extras. Renderer thread.
+     */
+    private void addCaptions(String videoId, Track track, String baseUrl) {
+        boolean srt = device.lists(Captions.SRT);
+        boolean vtt = device.lists(Captions.VTT);
+        boolean samsung = device.isSamsung();
+        boolean extras = RendererExtras.wanted(device);
+        if (!srt && !vtt && !samsung && !extras) return;
+        Captions.Track pick = Captions.prepare(videoId, () -> {
+            // More tracks are ready: the extras list them.
+            if (extras && videoId.equals(loadedVideoId)) RendererExtras.publish(videoId, extrasDurationMs, false);
+        });
+        if (pick == null) return;
+        if (srt || samsung) track.captionSrt = baseUrl + Captions.path(videoId, pick, "srt");
+        if (vtt && !srt) track.captionVtt = baseUrl + Captions.path(videoId, pick, "vtt");
+        track.captionSamsung = samsung;
+        Log.i("Captions " + pick + " sent with " + videoId);
     }
 
     /** A pause that is still there on the phone after loading a title (and any reload) is applied. */
@@ -577,6 +616,11 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 }
                 break;
             case "STOPPED":
+                // Some renderers report it while loading a title (and after a command then).
+                if (SystemClock.elapsedRealtime() < rendererSettleUntil) {
+                    Log.d("Renderer stopped while loading, not ending the cast");
+                    break;
+                }
                 long duration = local.duration();
                 if (duration <= 0 || duration - local.position() > 5000) {
                     // Stopped on the TV, not the end of the title: end the cast like YouTube does.

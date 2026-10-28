@@ -116,7 +116,9 @@ public final class PlayerIntents {
         // Of Morphe's commands, SponsorBlock's skips are the TV's too; others (loop, crossfade's
         // second player) are the phone's.
         if (caller.startsWith("morphe")) {
-            return "seek".equals(kind) && caller.contains("SponsorBlock")
+            // From a touch: the user's (Morphe's swipe seek, its skip button).
+            boolean user = caller.endsWith("+touch") && (!"pause".equals(kind) || reason == USER_PAUSE_REASON);
+            return user || ("seek".equals(kind) && caller.contains("SponsorBlock"))
                     ? "forward (" + caller + ")" : "ignore (" + caller + ")";
         }
         if ("seek".equals(kind)) {
@@ -151,30 +153,56 @@ public final class PlayerIntents {
         return name.startsWith("SEEK_SOURCE_") ? name.substring("SEEK_SOURCE_".length()) : name;
     }
 
-    /** Who called: our cast, a Morphe patch, the media session, the player UI, or the app. */
+    /** Our classes that only pass the app's events on (window callback, cast button, cover). */
+    private static final java.util.regex.Pattern PASS_THROUGH =
+            java.util.regex.Pattern.compile("(CastUi|DlnaCast|VideoCover)(\\$|$)");
+
+    /**
+     * Who called: our cast, a Morphe patch, the media session, the player UI, or the app. The
+     * nearest of them counts, seen from the player: a touch on the progress bar is the UI's even
+     * though Morphe's swipe controls and our window callback wrap all touches further out.
+     * A Morphe command made from a touch is marked "+touch" (the user's, like a swipe seek).
+     */
     private static String caller(String kind) {
-        String morphe = null, ours = null;
-        boolean session = false, ui = false;
+        String decisive = null;
+        boolean touch = false;
         for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
             String c = frame.getClassName();
-            if (c.startsWith("app.ytdlna.extension.") && !c.endsWith(".PlayerIntents")) {
-                if (ours == null) ours = c.substring(c.lastIndexOf('.') + 1) + "." + frame.getMethodName();
+            String method = frame.getMethodName();
+            String name = c.substring(c.lastIndexOf('.') + 1);
+            if (c.startsWith("app.ytdlna.extension.")) {
+                if (decisive == null && !c.endsWith(".PlayerIntents") && !PASS_THROUGH.matcher(name).lookingAt()) {
+                    decisive = "ours:" + name + "." + method;
+                }
             } else if (c.startsWith("app.morphe.extension.")) {
                 // The patch behind the call, not the shared helpers it calls through.
-                String name = c.substring(c.lastIndexOf('.') + 1);
-                if (morphe == null && !name.startsWith("VideoInformation") && !name.startsWith("Utils")) morphe = name;
+                if (decisive == null && !name.startsWith("VideoInformation") && !name.startsWith("Utils")) {
+                    decisive = "morphe:" + name;
+                }
             } else if (c.startsWith("android.media.session.MediaSession")) {
-                session = true;
-            } else if ((c.equals("android.view.View") && frame.getMethodName().equals("performClick"))
-                    || c.equals("android.view.GestureDetector")) {
-                ui = true;
+                if (decisive == null) decisive = takeOwn(kind) ? "ours:session" : "session";
+            } else if (isTouch(c, method)) {
+                touch = true;
+                if (decisive == null) decisive = "ui";
             }
         }
-        if (ours != null) return "ours:" + ours;
-        if (morphe != null) return "morphe:" + morphe;
-        if (session) return takeOwn(kind) ? "ours:session" : "session";
-        if (ui) return "ui";
-        return "app";
+        if (decisive == null) return "app";
+        return decisive.startsWith("morphe") && touch ? decisive + "+touch" : decisive;
+    }
+
+    private static boolean isTouch(String c, String method) {
+        switch (c) {
+            case "android.view.View":
+                return method.equals("performClick") || method.equals("onTouchEvent")
+                        || method.equals("dispatchTouchEvent");
+            case "android.view.ViewGroup":
+            case "android.app.Activity":
+                return method.equals("dispatchTouchEvent");
+            case "android.view.GestureDetector":
+                return true;
+            default:
+                return false;
+        }
     }
 
     /** Consumes a command we sent of this kind, if one is due. */

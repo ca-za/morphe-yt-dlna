@@ -20,6 +20,9 @@ final class RendererExtras {
     static final String NAMESPACE = "urn:ytdlna-org:metadata-1";
     static final int VERSION = 1;
 
+    /** Address of the phone's proxy as the renderer reaches it ("http://host:port"). */
+    static volatile String baseUrl = "";
+
     /** For the tests: treat every renderer as one that asks. */
     static volatile boolean forceAnnounce;
 
@@ -28,9 +31,7 @@ final class RendererExtras {
 
     /** Whether the renderer asked for the extras (explicitly: a wildcard sink does not count). */
     static boolean wanted(DlnaDevice device) {
-        if (forceAnnounce) return true;
-        String sink = device.sinkProtocols;
-        return sink != null && sink.toLowerCase(java.util.Locale.ROOT).contains(":" + MIME + ":");
+        return forceAnnounce || device.lists(MIME);
     }
 
     static String path(String videoId) {
@@ -64,7 +65,7 @@ final class RendererExtras {
                     .put("complete", complete)
                     .put("segments", segmentsJson(segments))
                     .put("chapters", new JSONArray())
-                    .put("captions", new JSONArray())
+                    .put("captions", Captions.extrasJson(videoId, baseUrl, Captions.selected(videoId)))
                     // Who skips segments: so far always the phone (its seek reaches the renderer).
                     .put("skipBy", "phone");
             if (durationMs > 0) doc.put("duration", durationMs / 1000.0);

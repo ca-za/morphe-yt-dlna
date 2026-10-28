@@ -15,6 +15,8 @@ final class DlnaDevice {
 
     final String location;
     String friendlyName = "";
+    /** From the device description, for maker-specific features (Samsung captions). */
+    String manufacturer = "";
     String udn = "";
     String avTransportType = AV_TRANSPORT + "1";
     String avTransportControlUrl;
@@ -59,6 +61,17 @@ final class DlnaDevice {
         } catch (IOException e) {
             return 80;
         }
+    }
+
+    /** Whether the renderer lists this media type itself (a wildcard does not count). */
+    boolean lists(String mimeType) {
+        String sink = sinkProtocols;
+        return sink != null && sink.toLowerCase(java.util.Locale.ROOT)
+                .contains(":" + mimeType.toLowerCase(java.util.Locale.ROOT) + ":");
+    }
+
+    boolean isSamsung() {
+        return manufacturer.toLowerCase(java.util.Locale.ROOT).contains("samsung");
     }
 
     boolean supports(String mimeType) {
@@ -118,6 +131,9 @@ final class DlnaDevice {
                             break;
                         case "friendlyName":
                             if (deviceDepth == 1 && friendlyName.isEmpty()) friendlyName = value;
+                            break;
+                        case "manufacturer":
+                            if (deviceDepth == 1 && manufacturer.isEmpty()) manufacturer = value;
                             break;
                         case "UDN":
                             if (deviceDepth == 1 && udn.isEmpty()) udn = value;

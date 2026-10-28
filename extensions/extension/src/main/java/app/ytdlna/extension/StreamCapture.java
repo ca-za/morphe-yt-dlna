@@ -125,6 +125,7 @@ public final class StreamCapture {
 
     /** Injection point: the player loads a new video. */
     public static void onVideoLoaded(String videoId) {
+        Captions.hookedVideoId = videoId;
         if (videoId == null || videoId.isEmpty() || videoId.equals(currentVideoId)) return;
         // While casting, what Shorts or the feed preview load is not the user's video: the
         // renderer keeps playing the main player's video.

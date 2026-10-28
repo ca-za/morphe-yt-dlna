@@ -110,6 +110,9 @@ final class LocalPlayer {
             } else if (MorpheState.sidePlayer() != null) {
                 // YouTube ends the main player's session while Shorts are in front.
                 Log.d("No media session while the " + MorpheState.sidePlayer() + " player is in front");
+            } else if (!ownCommands) {
+                // The tests' helper player: the session comes back with the next title.
+                Log.d("App media session not found for a test command");
             } else {
                 Log.i("App media session not found, local controls are not mirrored");
             }

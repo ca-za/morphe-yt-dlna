@@ -1,6 +1,7 @@
 # Konzept: SponsorBlock, Untertitel und Hinweise für den Renderer
 
-Status: Entwurf, nicht umgesetzt.
+Status: Stufe 1 (Extras-Dokument mit SponsorBlock-Abschnitten) und Stufe 2 (Untertitel) sind
+umgesetzt; Abweichungen vom Entwurf stehen unter „Umgesetzt“ am Ende. Stufen 3 und 4 sind offen.
 
 Ziel: Ein Renderer soll SponsorBlock-Abschnitte, Untertitel und Texthinweise (etwa „Sponsor
 übersprungen“) kennen und selbst berücksichtigen können. Jeder andere DLNA/UPnP-Renderer und
@@ -222,3 +223,27 @@ Extras senden, Hinweise in Untertiteln) und eine Liste von Geräten, bei denen e
 Für Tests bekommt der Test-Renderer (AirPlay-Emulator) bzw. ein kleiner Mock die Ankündigungen,
 und die Regressionstests prüfen, dass ein Renderer ohne Ankündigung byte-gleiche Metadaten
 bekommt.
+
+## Umgesetzt (Stand alpha.9)
+
+- **Extras-Dokument** unter `/extras/<videoId>.json` mit `segments` (Morphes Abschnitte und die
+  Einstellung je Kategorie) und `captions`; `chapters` ist noch leer. Der Proxy liefert Texte
+  mit `ETag` und `Cache-Control: no-cache`, auf `If-None-Match` mit 304. Long-Polling (`?wait=`)
+  gibt es nicht; der Renderer fragt erneut, solange `complete` `false` ist (spätestens 15 s nach
+  dem Laden ist es `true`).
+- **Titel der Warteschlange** (OpenHome-Playlist, `SetNextAVTransportURI`) tragen den Verweis
+  schon; ihr Dokument gibt es erst, wenn das Handy den Titel spielt. Bis dahin antwortet der
+  Proxy mit 404.
+- **Untertitel:** Die Spuren kommen aus der Player-Antwort der App (dieselben Adressen, die die
+  App nutzt; ein Token ist dafür derzeit nicht nötig). Sie werden in SRT und WebVTT umgewandelt:
+  `/captions/<videoId>.<sprache>[-auto].srt|vtt`.
+  - Mit dem Titel geht die Spur in der Sprache des Handys (geschriebene vor automatisch erzeugter)
+    als zusätzliches `res` mit `text/srt` (oder `text/vtt`, wenn der Renderer nur das listet).
+  - Samsung-Geräte (Hersteller in der Gerätebeschreibung) bekommen zusätzlich
+    `sec:CaptionInfoEx`. Der HTTP-Header `CaptionInfo.sec` ist noch nicht umgesetzt.
+  - Alle Spuren stehen nach und nach im Extras-Dokument (im Hintergrund geladen).
+  - Schalter „DLNA: Untertitel“ in den Morphe-Einstellungen (Standard: an). Ob am Handy
+    Untertitel eingeschaltet sind, wird noch nicht berücksichtigt.
+- **Ankündigung:** nur ausdrücklich gelistete Formate zählen (`*:*` nicht).
+- **Tests:** `renderer_extras` prüft, dass ein Renderer ohne Ankündigung nichts davon bekommt,
+  und mit Ankündigung Dokument, Abschnitte, Untertitel-Ressource (gültiges SRT) und ETag.

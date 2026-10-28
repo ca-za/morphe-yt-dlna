@@ -256,6 +256,9 @@ final class TestHooks {
         CastSession session = CastSession.active();
         out.put("casting", session != null);
         out.put("renderers", RendererScanner.devices().size());
+        org.json.JSONArray locations = new org.json.JSONArray();
+        for (DlnaDevice d : RendererScanner.devices()) locations.put(d.location);
+        out.put("rendererLocations", locations);
         out.put("googleCast", DlnaCast.googleCastAvailable);
         if (session != null) out.put("session", session.status());
         // State of the app's player, from its media session.

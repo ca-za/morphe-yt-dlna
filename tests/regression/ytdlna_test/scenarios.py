@@ -225,24 +225,31 @@ def _picker_open(ctx: Context) -> bool:
 
 
 def cast_button_follows(ctx: Context) -> Result:
-    """The cast button hides when no renderer is reachable and shows again when one is."""
+    """The cast button hides when no renderer is reachable and shows again when one is.
+    Other renderers in the network (found by the search) keep it shown: then only the test
+    renderer's leaving and coming back is checked."""
     unreachable = "http://10.0.2.2:9/description.xml"
+    test_renderer = ctx.renderer_device_url
     ctx.control.cmd("setup", device=unreachable)
     try:
         ctx.control.cmd("rescan")
-        status = ctx.control.wait_status(lambda st: st.get("renderers", 1) == 0, 12)
-        gone = status.get("renderers", 1) == 0
-        # With Google Cast devices (as the app reports them) the button stays.
-        hidden = status.get("googleCast") or until(lambda: not (ctx.ui.find(rid="mini_player_media_route_button")
-                                                                or ctx.ui.find(rid="media_route_button")), 8)
+        status = ctx.control.wait_status(lambda st: test_renderer not in st.get("rendererLocations", [test_renderer]), 12)
+        gone = test_renderer not in status.get("rendererLocations", [test_renderer])
+        others = [loc for loc in status.get("rendererLocations", []) if loc != unreachable]
+        # With Google Cast devices (as the app reports them) or other renderers the button stays.
+        hidden = status.get("googleCast") or others or until(
+            lambda: not (ctx.ui.find(rid="mini_player_media_route_button") or ctx.ui.find(rid="media_route_button")), 8)
     finally:
         ctx.control.cmd("setup", device=ctx.renderer_device_url)
     ctx.control.cmd("rescan")
-    back = ctx.control.wait_status(lambda st: st.get("renderers", 0) > 0, 12).get("renderers", 0) > 0
+    back = test_renderer in ctx.control.wait_status(
+        lambda st: test_renderer in st.get("rendererLocations", []), 12).get("rendererLocations", [])
     shown = until(lambda: ctx.ui.find(rid="mini_player_media_route_button") or ctx.ui.find(rid="media_route_button"), 8)
     problems = [p for p, bad in [("renderer still listed", not gone), ("button not hidden", not hidden),
                                  ("renderer not found again", not back), ("button not shown again", not shown)] if bad]
-    return Result("fail" if problems else "pass", ", ".join(problems))
+    return Result("fail" if problems else "pass", ", ".join(problems) or
+                  (f"{len(others)} other renderers in the network keep the button" if others else ""),
+                  {"others": others})
 
 
 #: Title of the apps' own Google Cast dialog (androidx MediaRouter chooser), English and German.
@@ -421,7 +428,11 @@ def renderer_metadata(ctx: Context) -> Result:
     if ctx.app == "music":
         # Album and year come from the app or the music database (the test title is well known).
         problems += [f"no {name}" for name in ("album", "date") if not meta.get(name)]
+    # The app's queue follows the title by a few seconds.
     playlist = ctx.renderer.playlist_size()
+    if ctx.renderer.openhome and ctx.app == "music" and playlist < 2:
+        playlist = until(lambda: (lambda n: n if n >= 2 else None)(ctx.renderer.playlist_size()), 10) \
+            or ctx.renderer.playlist_size()
     meta["playlistSize"] = playlist
     if ctx.renderer.openhome and ctx.app == "music":
         if playlist < 2:
@@ -604,10 +615,17 @@ def _switch(ctx: Context, icon: str, expect: str) -> Result:
         node = ctx.ui.wait(5, rid=icon)
     if not node:
         raise Skip("song/video switch not found")
+    if not node.enabled:
+        # Titles without a song (or video) version have the switch disabled.
+        raise Skip("this title has no song/video switch")
     since = ctx.logs.mark()
     ctx.ui.tap(node)
     m = ctx.logs.wait(rf"Switching the renderer to {expect}", 12, since)
     if not m:
+        # Titles without a song (or video) version: the app itself stays in its mode.
+        mode = "song" if expect == "audio" else "video"
+        if not ctx.logs.find_all(rf"Music mode \S+ \({mode}\)", since):
+            raise Skip(f"the app did not switch to {expect} (title without that version?)")
         return Result("fail", f"renderer not switched to {expect}")
     # Music videos are announced as such (renderers may show a music video screen).
     wanted = "object.item.audioItem" if expect == "audio" else "object.item.videoItem.musicVideoClip"
@@ -716,6 +734,53 @@ def _tap_play_pause(ctx: Context, kind: str) -> bool:
     return until(lambda: len(_intents(ctx, kind)) > before, 4)
 
 
+def scrubber_seek(ctx: Context) -> Result:
+    """Dragging the player's progress bar seeks the TV too."""
+    if ctx.renderer.state() != "PLAYING":
+        ctx.renderer.play()
+        renderer_state_is(ctx, "PLAYING", 8)
+    before = ctx.renderer.position_ms()
+    nodes = ctx.ui.dump()
+    since = ctx.logs.mark()
+    if ctx.app == "music":
+        bar = next((n for n in nodes if n.resource_id.split("/")[-1] == "time_bar"), None)
+        if not bar:
+            mini = ctx.ui.find(rid="mini_player_view_pager_item") or ctx.ui.find(rid="mini_player")
+            if mini:
+                ctx.ui.tap(mini)
+                time.sleep(2)
+            bar = ctx.ui.find(rid="time_bar")
+        if not bar:
+            return Result("env", "no progress bar")
+        y = bar.center[1]
+        x1, x2 = bar.bounds[0] + (bar.bounds[2] - bar.bounds[0]) // 5, bar.bounds[0] + (bar.bounds[2] - bar.bounds[0]) * 3 // 5
+        ctx.phone.sh(f"input swipe {x1} {y} {x2} {y} 800")
+    else:
+        overlay = next((n for n in nodes if n.resource_id.endswith("player_overlays")), None)
+        if overlay and "Expand" in overlay.desc:
+            ctx.ui.tap(overlay)
+            time.sleep(2)
+            nodes = ctx.ui.dump()
+        player = next((n for n in nodes if n.resource_id.split("/")[-1] == "watch_player"), None)
+        if not player:
+            return Result("env", "no player", {"ids": sorted({n.resource_id.split("/")[-1] for n in nodes})[:60]})
+        since = ctx.logs.mark()
+        left, top, right, bottom = player.bounds
+        # The bar runs along the player's lower edge, once the controls are shown.
+        ctx.phone.sh(f"input tap {(left + right) // 2} {(top + bottom) // 2}; sleep 0.4; "
+                     f"input swipe {left + (right - left) // 5} {bottom - 4} {left + (right - left) * 3 // 5} {bottom - 4} 800")
+    intent = ctx.logs.wait(r"Intent seek (\d+) ms source=(\S+) by (\S+).* -> (.*)$", 8, since)
+    sent = ctx.logs.wait(r"Phone seek to (\d+) ms .*sent to the renderer", 6, since)
+    target = int(sent.group(1)) if sent else None
+    moved = target is not None and until(lambda: abs(ctx.renderer.position_ms() - target) < 8000, 12)
+    evidence = {"before": before, "intent": intent.group(0) if intent else None,
+                "sent": sent.group(0) if sent else None, "after": ctx.renderer.position_ms()}
+    if not intent:
+        return Result("fail", "the phone's player got no seek", evidence)
+    problems = [p for p, bad in [("seek not sent to the TV", not sent), ("TV not at the new position", not moved)] if bad]
+    return Result("fail" if problems else "pass", ", ".join(problems) or intent.group(2), evidence)
+
+
 def ui_controls(ctx: Context) -> Result:
     """Pause and play with the player's own button: the hooks see them as the user's (by a view)
     and the TV follows."""
@@ -793,6 +858,27 @@ def renderer_extras(ctx: Context) -> Result:
             problems.append("document not complete after 25 s")
         elif not sponsor or abs(sponsor[0].get("start", 0) - SPONSOR_SEGMENT[0] / 1000) > 1:
             problems.append("sponsor segment missing")
+        # Captions: an SRT resource for a renderer that lists text/srt, the tracks in the extras.
+        lists_srt = "text/srt" in ctx.renderer.sink_protocols().lower()
+        didl = ctx.renderer.didl()
+        srt = re.search(r'protocolInfo="http-get:\*:text/srt:\*"[^>]*>([^<]+)<', didl)
+        evidence["captionsResource"] = srt.group(1) if srt else None
+        if lists_srt and not srt:
+            problems.append("no captions resource for a renderer that lists text/srt")
+        if not lists_srt and srt:
+            problems.append("captions resource for a renderer that does not list text/srt")
+        if srt:
+            body = _http(re.sub(r"^http://[^/]+", "http://127.0.0.1:8720", srt.group(1).replace("&amp;", "&")))
+            evidence["srtStart"] = body[:120]
+            if not re.match(r"1\n\d\d:\d\d:\d\d,\d{3} --> ", body):
+                problems.append("captions resource is not SRT")
+        with_tracks = until(lambda: (lambda r: r if r[2] and r[2].get("captions") else None)(fetch()), 20)
+        evidence["captionTracks"] = [(t.get("language"), t.get("auto"), t.get("default")) for t in
+                                     (with_tracks[2]["captions"] if with_tracks else [])]
+        if not with_tracks:
+            problems.append("no caption tracks in the extras")
+        # The document grew with the tracks: revalidate its latest version.
+        etag = fetch()[1] or etag
         if etag:
             again = fetch(etag)[0]
             evidence["revalidate"] = again
@@ -1117,6 +1203,10 @@ def crossfade(ctx: Context) -> Result:
             return Result("fail", f"cast start: {started.detail}")
         if not renderer_state_is(ctx, "PLAYING", 25):
             return Result("fail", f"renderer state {ctx.renderer.state()}")
+        # The cast start reloads the phone's title through its neighbour: skip once it is back.
+        ctx.control.wait_status(lambda st: st.get("currentVideoId")
+                                and st.get("currentVideoId") == st.get("session", {}).get("loadedVideoId"), 15)
+        time.sleep(2)
         since = ctx.logs.mark()
         results = {"phone_next": phone_next(ctx), "tv_next": tv_next(ctx)}
         pauses = ctx.logs.find_all(r"Phone pause by .*sent to the renderer", since)
@@ -1165,6 +1255,7 @@ SCENARIOS = [
     ("tv_play", tv_play, {"yt", "music"}),
     ("phone_seek", phone_seek, {"yt", "music"}),
     ("ui_controls", ui_controls, {"yt", "music"}),
+    ("scrubber_seek", scrubber_seek, {"yt", "music"}),
     ("volume_keys", volume_keys, {"yt", "music"}),
     ("phone_next", phone_next, {"music"}),
     ("tv_next", tv_next, {"music"}),
