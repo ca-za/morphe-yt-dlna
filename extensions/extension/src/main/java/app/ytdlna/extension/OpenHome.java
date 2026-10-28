@@ -30,6 +30,10 @@ final class OpenHome {
         return Integer.parseInt(m.group(1));
     }
 
+    static void deleteId(DlnaDevice device, int id) throws IOException {
+        playlist(device, "DeleteId", "<Value>" + id + "</Value>");
+    }
+
     static void seekId(DlnaDevice device, int id) throws IOException {
         playlist(device, "SeekId", "<Value>" + id + "</Value>");
     }

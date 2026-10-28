@@ -126,15 +126,33 @@ final class OpenHomeRenderer extends Renderer {
     void load(Load load) throws Exception {
         registerAuto(load.info);
         if (!playlistStarted) startPlaylist(load);
-        int trackId = trackIdByVideo.containsKey(load.info.videoId)
-                ? trackIdByVideo.get(load.info.videoId)
-                : insert(currentTrackId, load.track, load.art);
+        Integer queued = trackIdByVideo.get(load.info.videoId);
+        int trackId;
+        if (queued == null) {
+            trackId = insert(currentTrackId, load.track, load.art);
+        } else if (queued != currentTrackId && hasCaptions(load.track)) {
+            // Queued before its captions were known (the renderer does not play it yet): an
+            // entry with them takes its place.
+            trackId = insert(queued, load.track, load.art);
+            videoByTrackId.remove(queued);
+            try {
+                OpenHome.deleteId(device, queued);
+            } catch (Exception e) {
+                Log.d("Removing the queued entry of " + load.info.videoId + " failed: " + e.getMessage());
+            }
+        } else {
+            trackId = queued;
+        }
         if (trackId != currentTrackId) {
             previousTrackId = currentTrackId;
             currentTrackId = trackId;
             OpenHome.seekId(device, trackId);
         }
         OpenHome.play(device);
+    }
+
+    private static boolean hasCaptions(Track track) {
+        return !track.captionSrt.isEmpty() || !track.captionVtt.isEmpty();
     }
 
     /**
