@@ -1,3 +1,9 @@
+## [1.0.0-alpha.6](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.5...v1.0.0-alpha.6) (2026-10-28)
+
+### ✨ New Features
+
+* debug log with SponsorBlock diagnostics ([c89430f](https://github.com/ca-za/morphe-yt-dlna/commit/c89430f8182ce6e5d79611f30920acf0cc74db28))
+
 ## [1.0.0-alpha.5](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.4...v1.0.0-alpha.5) (2026-10-28)
 
 ### 🐛 Bug Fixes
