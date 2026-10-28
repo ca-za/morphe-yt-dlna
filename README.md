@@ -56,7 +56,7 @@ In Morphe's settings, under Player:
 - With album covers on, YouTube Music sends title and artist to Deezer / iTunes.
 
 <!-- PATCHES_START EXPANDED -->
-> **[v1.0.0-alpha.6](https://github.com/ca-za/morphe-yt-dlna/releases/tag/v1.0.0-alpha.6)**&nbsp;&nbsp;•&nbsp;&nbsp;`dev`&nbsp;&nbsp;•&nbsp;&nbsp;2 patches total
+> **[v1.0.0-alpha.7](https://github.com/ca-za/morphe-yt-dlna/releases/tag/v1.0.0-alpha.7)**&nbsp;&nbsp;•&nbsp;&nbsp;`dev`&nbsp;&nbsp;•&nbsp;&nbsp;2 patches total
 <details open>
 <summary>📦 YouTube&nbsp;&nbsp;•&nbsp;&nbsp;1 patch</summary>
 <br>

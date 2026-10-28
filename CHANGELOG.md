@@ -1,3 +1,9 @@
+## [1.0.0-alpha.7](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.6...v1.0.0-alpha.7) (2026-10-28)
+
+### ✨ New Features
+
+* observe player commands with their source (prototype) ([236336a](https://github.com/ca-za/morphe-yt-dlna/commit/236336a4aa18ac96f2c9e09696961370c7a2047d))
+
 ## [1.0.0-alpha.6](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.5...v1.0.0-alpha.6) (2026-10-28)
 
 ### ✨ New Features
