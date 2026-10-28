@@ -1,5 +1,15 @@
 ## [1.0.0-alpha.9](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.8...v1.0.0-alpha.9) (2026-10-28)
 
+### 🐛 Bug Fixes
+
+* captions for queued YouTube Music titles ([b40a4ed](https://github.com/ca-za/morphe-yt-dlna/commit/b40a4ed75ac0a10a2693f884ad72ea3e611ec8e7))
+
+### ✨ New Features
+
+* captions for renderers; fix seeking with the progress bar ([dc1b858](https://github.com/ca-za/morphe-yt-dlna/commit/dc1b858464ceb8be19f696f6bb9a809ee8604f94))
+
+## [1.0.0-alpha.9](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.8...v1.0.0-alpha.9) (2026-10-28)
+
 ### ✨ New Features
 
 * captions for renderers; fix seeking with the progress bar ([dc1b858](https://github.com/ca-za/morphe-yt-dlna/commit/dc1b858464ceb8be19f696f6bb9a809ee8604f94))
