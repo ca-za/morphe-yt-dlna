@@ -107,6 +107,9 @@ final class LocalPlayer {
         if (token == null) {
             if (++attachAttempts < ATTACH_ATTEMPTS) {
                 main.postDelayed(() -> attach(onAttached), 1000);
+            } else if (MorpheState.sidePlayer() != null) {
+                // YouTube ends the main player's session while Shorts are in front.
+                Log.d("No media session while the " + MorpheState.sidePlayer() + " player is in front");
             } else {
                 Log.i("App media session not found, local controls are not mirrored");
             }

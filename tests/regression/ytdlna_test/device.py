@@ -133,6 +133,17 @@ class Node:
         return (self.bounds[0] + self.bounds[2]) // 2, (self.bounds[1] + self.bounds[3]) // 2
 
 
+# Characters XML 1.0 does not allow; uiautomator writes them as they are (live chat, emoji
+# halves), and one of them makes the whole dump unreadable.
+_XML_INVALID = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]|&#(?:x0*[0-8bcef]|x0*1[0-9a-f]|0*(?:[0-8]|1[124-9]|2[0-9]|3[01]));", re.I)
+
+
+def _xml_safe(xml) -> str:
+    if isinstance(xml, bytes):
+        xml = xml.decode("utf-8", errors="replace")
+    return _XML_INVALID.sub("\ufffd", xml)
+
+
 class Ui:
     """UI automation through uiautomator dumps: elements are found by id or text, not by position."""
 
@@ -140,16 +151,21 @@ class Ui:
         self.device = device
 
     def dump(self) -> list[Node]:
+        root = None
         for _ in range(3):
             # --windows: all windows, also dialogs over translucent activities (the share target).
             self.device.sh("uiautomator dump --windows /sdcard/ytdlna-ui.xml >/dev/null 2>&1")
             xml = self.device.adb("exec-out", "cat", "/sdcard/ytdlna-ui.xml", check=False)
             try:
-                root = ET.fromstring(xml)
-                break
+                root = ET.fromstring(_xml_safe(xml))
             except ET.ParseError:
                 time.sleep(0.5)
-        else:
+                continue
+            # While the app is busy (a playing video), the dump often holds the status bar only:
+            # the app's windows are missing, not gone. Once more then.
+            if any(n.get("package") not in ("", "com.android.systemui") for n in root.iter("node")):
+                break
+        if root is None:
             return []
         nodes = []
         for n in root.iter("node"):
@@ -162,8 +178,10 @@ class Ui:
     def find(self, rid: str = None, text: str = None, contains: str = None, nodes=None) -> "Node | None":
         """Element by id or text. Not found on the screen: known dialogs (which can come up any
         time, like Morphe's experimental version notice) are dismissed and it is looked for again."""
-        node = self._find(rid, text, contains, nodes if nodes is not None else self.dump())
-        if node is None and nodes is None and self.dismiss_dialogs():
+        dumped = nodes if nodes is not None else self.dump()
+        node = self._find(rid, text, contains, dumped)
+        # Dumps take seconds while a video plays: the dialog check starts from this one.
+        if node is None and nodes is None and self.dismiss_dialogs(nodes=dumped):
             node = self._find(rid, text, contains, self.dump())
         return node
 
@@ -173,9 +191,10 @@ class Ui:
                 continue
             if rid and node.resource_id != rid:
                 continue
-            if text and node.text != text:
+            if text and node.text not in ((text,) if isinstance(text, str) else text):
                 continue
-            if contains and contains.lower() not in (node.text + " " + node.desc).lower():
+            if contains and not any(c.lower() in (node.text + " " + node.desc).lower()
+                                    for c in ((contains,) if isinstance(contains, str) else contains)):
                 continue
             return node
         return None
@@ -200,19 +219,34 @@ class Ui:
     # app versions (YouTube 21.20+, Music 9.40+); keeping the installed version is wanted here.
     DISMISS_CONTAINS = ["I want experimental"]
 
+    # Notices confirmed with a button, found by their title: YouTube on background play (Morphe
+    # enables it), coming up once the player is minimized or another activity opens.
+    # Also Android's "isn't responding" dialog: on a loaded emulator an app may be slow for a
+    # moment (seen with YouTube's own background jobs); waiting lets the run go on.
+    CONFIRM_BY_TITLE = [(("Background play is on", "Hintergrundwiedergabe ist aktiviert"), "OK"),
+                        (("isn't responding", "reagiert nicht"), "Wait"),
+                        (("reagiert nicht",), "Warten")]
+
     # Sheets closed with Back, found by their title: YouTube's bedtime reminder of the account
     # (it comes up in the evening, any time during a run).
     DISMISS_BY_BACK = ["Sleep time?", "Zeit zum Schlafen"]
 
-    def dismiss_dialogs(self, rounds: int = 4) -> list[str]:
-        """Taps known dismiss buttons until none is left. Returns what was tapped."""
+    def dismiss_dialogs(self, rounds: int = 4, nodes=None) -> list[str]:
+        """Taps known dismiss buttons until none is left. Returns what was tapped.
+        {nodes}: a dump just taken, used for the first round."""
         tapped = []
         for _ in range(rounds):
-            nodes = self.dump()
+            nodes = nodes if nodes is not None else self.dump()
             hit = next((n for label in self.DISMISS for n in nodes if n.text == label), None) \
                 or next((n for label in self.DISMISS_CONTAINS for n in nodes if label in n.text), None) \
                 or next((n for n in nodes if n.text in ("Allow", "Zulassen")
                          and "permissioncontroller" in n.package), None)
+            for titles, button in self.CONFIRM_BY_TITLE:
+                if hit:
+                    break
+                # Buttons too common to tap on their own ("OK", "Wait"): only under their title.
+                if any(t in n.text for n in nodes for t in titles):
+                    hit = next((n for n in nodes if n.text == button), None)
             if not hit:
                 # The bedtime sheet: its title may be in text or description; its "Remind me
                 # again" button is the sure sign. Closed with its close button, else with Back.
@@ -227,8 +261,10 @@ class Ui:
                     self.device.key("KEYCODE_BACK")
                 tapped.append(sheet.text or sheet.desc)
                 time.sleep(1.5)
+                nodes = None
                 continue
             self.tap(hit)
             tapped.append(hit.text)
             time.sleep(1.5)
+            nodes = None
         return tapped

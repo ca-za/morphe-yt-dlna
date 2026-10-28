@@ -79,7 +79,8 @@ public final class StreamCapture {
         }
         executor.execute(() -> capture(bytes, videoDetails));
 
-        if (CastSession.active() == null) return streamingData;
+        // Shorts or a feed preview play on the phone, with all their streams.
+        if (CastSession.active() == null || MorpheState.sidePlayer() != null) return streamingData;
         try {
             byte[] audioOnly = LocalPlayback.audioOnly(bytes);
             if (audioOnly == null) return streamingData;
@@ -103,7 +104,7 @@ public final class StreamCapture {
                 streams.remove(info.videoId); // Re-insert as newest.
                 streams.put(info.videoId, info);
             }
-            Log.i("Captured " + info.summary());
+            Log.i("Captured " + info.summary() + " " + MorpheState.summary());
             for (StreamInfo.Format f : info.formats) {
                 Log.d("  " + f);
             }
@@ -125,8 +126,15 @@ public final class StreamCapture {
     /** Injection point: the player loads a new video. */
     public static void onVideoLoaded(String videoId) {
         if (videoId == null || videoId.isEmpty() || videoId.equals(currentVideoId)) return;
+        // While casting, what Shorts or the feed preview load is not the user's video: the
+        // renderer keeps playing the main player's video.
+        String side = CastSession.active() != null ? MorpheState.sidePlayer() : null;
+        if (side != null) {
+            Log.d("Ignoring " + videoId + " of the " + side + " player " + MorpheState.summary());
+            return;
+        }
         currentVideoId = videoId;
-        Log.d("Now playing " + videoId);
+        Log.d("Now playing " + videoId + " " + MorpheState.summary());
         for (Listener listener : listeners) {
             try {
                 listener.onVideoLoaded(videoId);

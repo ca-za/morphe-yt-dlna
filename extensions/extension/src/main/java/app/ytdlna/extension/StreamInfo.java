@@ -173,6 +173,19 @@ final class StreamInfo {
         return hlsManifestUrl.startsWith("https://") && lengthSeconds == 0;
     }
 
+    /**
+     * Only SABR streams: no separate audio or video track has a direct URL (at most the muxed
+     * 360p one). With "Spoof video streams" the app often gets these first and the full ones a
+     * moment later.
+     */
+    boolean isSabrOnly() {
+        if (isLive()) return false;
+        for (Format f : formats) {
+            if (f.hasUrl() && (f.isAudioOnly() || f.isVideoOnly())) return false;
+        }
+        return true;
+    }
+
     String summary() {
         int withUrl = 0, audio = 0, video = 0;
         for (Format f : formats) {

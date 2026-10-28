@@ -36,6 +36,8 @@ def start(avd: str, serial: str, log_dir: Path, timeout: float = 300) -> None:
     port = serial.split("-")[-1]
     log = (log_dir / f"emulator-{avd}.log").open("a")
     subprocess.Popen([str(EMULATOR), "-avd", avd, "-port", port, "-netdelay", "none", "-netspeed", "full",
+                      # The Mac's GPU: software rendering takes a large part of the emulator's CPU.
+                      "-gpu", "host",
                       # Silent on the Mac: the "none" backend still plays (and times) audio inside
                       # Android, unlike -no-audio, which removes the audio device.
                       "-audio", "none"],
@@ -86,6 +88,9 @@ def ensure(args, log_dir: Path) -> list[str]:
     # MicroG must not be stopped by battery optimisation; the screen must not time out mid-test.
     phone.sh("dumpsys deviceidle whitelist +app.revanced.android.gms")
     phone.sh("svc power stayon true")
+    # No animations: the UI settles sooner, so taps and dumps hit what the tests expect.
+    for name in ("window_animation_scale", "transition_animation_scale", "animator_duration_scale"):
+        phone.sh(f"settings put global {name} 0")
     phone.wake()
     if restarted:
         time.sleep(5)  # Renderer app start.

@@ -151,6 +151,14 @@ final class TestHooks {
                                 .putBoolean("morphe_music_hide_cast_button", hide).commit();
                         result.put("restart", changed);
                     }
+                    if (intent.hasExtra("crossfade")) {
+                        // Morphe's crossfade (YouTube Music), read at the app start like above.
+                        android.content.SharedPreferences morphe =
+                                context.getSharedPreferences("morphe_prefs", Context.MODE_PRIVATE);
+                        boolean on = Boolean.parseBoolean(intent.getStringExtra("crossfade"));
+                        result.put("restart", morphe.getBoolean("morphe_music_crossfade_enabled", false) != on);
+                        morphe.edit().putBoolean("morphe_music_crossfade_enabled", on).commit();
+                    }
                     if (intent.hasExtra("googleCastLink")) {
                         context.getSharedPreferences("morphe_prefs", Context.MODE_PRIVATE).edit()
                                 .putBoolean("ytdlna_google_cast_link",
@@ -255,8 +263,15 @@ final class TestHooks {
         PlaybackState state = player.state();
         local.put("state", state == null ? -1 : state.getState());
         local.put("position", player.position());
+        local.put("duration", player.duration());
         local.put("queue", player.queue().size());
         player.detach();
         out.put("local", local);
+        final JSONObject morphe = new JSONObject();
+        morphe.put("playerType", MorpheState.playerType());
+        morphe.put("videoState", MorpheState.videoState());
+        morphe.put("videoId", MorpheState.videoId());
+        morphe.put("short", MorpheState.isShort());
+        out.put("morphe", morphe);
     }
 }

@@ -239,7 +239,7 @@ def _open_picker(ctx: Context):
         # YouTube: through the share menu, where no cast button is involved.
         ctx.phone.sh(f"am start -n {ctx.package}/{SHARE_ACTIVITY} -a android.intent.action.SEND "
                      f"-t text/plain --es android.intent.extra.TEXT 'https://youtu.be/{ctx.video_id}'")
-    return ctx.ui.wait(10, contains=ctx.renderer.name)
+    return ctx.ui.wait(20, contains=ctx.renderer.name)
 
 
 def google_cast_link(ctx: Context) -> Result:
@@ -282,30 +282,30 @@ def manual_devices(ctx: Context) -> Result:
     try:
         if not _open_picker(ctx):
             return Result("fail", "picker did not open")
-        marked = until(lambda: ctx.ui.find(contains="DLNA · manual · ") or ctx.ui.find(contains="DLNA · manuell · "), 5)
-        listed = (ctx.ui.wait(15, contains="Manual · unreachable") or ctx.ui.wait(1, contains="Manuell · nicht erreichbar"))
+        marked = ctx.ui.wait(10, contains=("DLNA · manual · ", "DLNA · manuell · "))
+        listed = ctx.ui.wait(15, contains=("Manual · unreachable", "Manuell · nicht erreichbar"))
         removed = renderer_kept = False
         confirm = None
         tries = []
         if listed:
             # A tap while the list is rebuilt (a renderer answering) is lost: try again.
             for _ in range(3):
-                dead = ctx.ui.find(contains="Manual · unreachable") or ctx.ui.find(contains="Manuell · nicht erreichbar")
-                buttons = [n for n in ctx.ui.dump() if n.desc in ("Remove", "Entfernen")]
+                nodes = ctx.ui.dump()
+                dead = ctx.ui.find(contains=("Manual · unreachable", "Manuell · nicht erreichbar"), nodes=nodes)
+                buttons = [n for n in nodes if n.desc in ("Remove", "Entfernen")]
                 tries.append({"row": dead and dead.bounds, "buttons": [b.bounds for b in buttons]})
                 if not dead or not buttons:
                     break
                 # The delete button in the same row as the unreachable entry.
                 ctx.ui.tap(min(buttons, key=lambda n: abs(n.center[1] - dead.center[1])))
                 # Dumps are slow while the search spinner turns: wait long enough for the dialog.
-                confirm = ctx.ui.wait(12, text="Remove") or ctx.ui.wait(1, text="Entfernen")
+                confirm = ctx.ui.wait(15, text=("Remove", "Entfernen"))
                 if confirm:
                     break
         if confirm:
             ctx.ui.tap(confirm)
             removed = bool(ctx.logs.wait(r"Removed saved device " + re.escape(unreachable), 5, since))
-            gone = until(lambda: not (ctx.ui.find(contains="Manual · unreachable")
-                                      or ctx.ui.find(contains="Manuell · nicht erreichbar")), 5)
+            gone = until(lambda: not ctx.ui.find(contains=("Manual · unreachable", "Manuell · nicht erreichbar"), nodes=ctx.ui.dump()), 10)
             removed = removed and bool(gone)
             renderer_kept = bool(ctx.ui.find(contains=ctx.renderer.name))
         _close_picker(ctx)
@@ -323,6 +323,13 @@ def start_cast(ctx: Context) -> Result:
     # The picker needs the captured streams of the playing title.
     ctx.logs.wait(rf"Captured videoId={ctx.video_id} ", 30)
     ctx.ui.dismiss_dialogs()
+    # The scenarios before take a while: from the start again, so the title does not end
+    # during the ones after (Music's test song is 3:33 long).
+    if ctx.video_id == TEST_VIDEO[ctx.app][0]:
+        position = ctx.control.status().get("local", {}).get("position", 0)
+        if position > 30_000:
+            ctx.control.local("seek", ms="5000")
+            time.sleep(1.5)
     since = ctx.logs.mark()
     tapped = {}
     if ctx.app == "music":
@@ -337,7 +344,7 @@ def start_cast(ctx: Context) -> Result:
     else:
         ctx.phone.sh(f"am start -n {ctx.package}/{SHARE_ACTIVITY} -a android.intent.action.SEND "
                      f"-t text/plain --es android.intent.extra.TEXT 'https://youtu.be/{ctx.video_id}'")
-    entry = ctx.ui.wait(12, contains=ctx.renderer.name)
+    entry = ctx.ui.wait(20, contains=ctx.renderer.name)
     if not entry:
         opened = ctx.logs.find_all(r"Could not show DLNA picker", since) or ctx.ui.find(contains="Google Cast")
         return Result("fail", f"picker did not list '{ctx.renderer.name}'"
@@ -602,11 +609,60 @@ def video_mode(ctx: Context) -> Result:
     return _switch(ctx, "video_icon", "video")
 
 
+#: A Short opened while casting (any public Short works).
+SHORT_VIDEO = os.environ.get("YTDLNA_SHORT_VIDEO", "LnR6W6ec1V8")
+
+
+def shorts_ignored(ctx: Context) -> Result:
+    """A Short opened while casting plays on the phone (sound, no cover) and the TV keeps the
+    video: nothing of the Short is sent. Back in the video, the phone is muted again."""
+    main_video = ctx.control.status().get("currentVideoId")
+    renderer_before = ctx.renderer.position_ms()
+    since = ctx.logs.mark()
+    ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/shorts/{SHORT_VIDEO}' "
+                 f"-p {ctx.package}")
+    opened = ctx.logs.wait(r"Ignoring (\S+) of the Shorts player", 20, since)
+    in_front = ctx.logs.wait(r"The Shorts player is in front", 15, since)
+    time.sleep(6)
+    status = ctx.control.status()
+    during = {"current": status.get("currentVideoId"), "muted": status.get("muted"), "morphe": status.get("morphe"),
+              "renderer": ctx.renderer.state(), "rendererPosition": ctx.renderer.position_ms()}
+    loaded_short = ctx.logs.find_all(rf"Loading {SHORT_VIDEO} ", since)
+    seeks = ctx.logs.find_all(r"Local seek to", since)
+    # Back: once for the Short's panels, until the main player is in front again.
+    back = None
+    for _ in range(3):
+        ctx.phone.key("KEYCODE_BACK")
+        back = ctx.logs.wait(r"Main player in front again", 6, since)
+        if back:
+            break
+    time.sleep(3)
+    after = ctx.control.status()
+    evidence = {"during": during, "seeks": seeks[:3], "rendererBefore": renderer_before,
+                "afterMuted": after.get("muted"), "rendererAfter": ctx.renderer.state()}
+    problems = [p for p, bad in [
+        ("Short not recognized", not (opened and in_front)),
+        ("the TV switched to the Short", loaded_short or during["current"] != main_video),
+        ("seeks of the Short sent to the TV", seeks),
+        ("Short muted on the phone", during["muted"]),
+        ("TV not playing on", during["renderer"] != "PLAYING" or during["rendererPosition"] <= renderer_before),
+        ("main player not noticed again", not back),
+        ("phone not muted again", back and not after.get("muted")),
+        ("TV stopped after the Short", ctx.renderer.state() != "PLAYING")] if bad]
+    return Result("fail" if problems else "pass", ", ".join(problems), evidence)
+
+
 def screen_lock(ctx: Context) -> Result:
     """Casting goes on with the phone locked."""
     if ctx.renderer.state() != "PLAYING":
         ctx.renderer.play()
         renderer_state_is(ctx, "PLAYING", 8)
+    # The title must not end while locked (the next one starts at 0): leave it enough time.
+    duration = ctx.control.status().get("local", {}).get("duration", 0)
+    if duration and duration - ctx.renderer.position_ms() < 45_000:
+        ctx.control.local("seek", ms="5000")
+        until(lambda: ctx.renderer.position_ms() < 20_000, 10)
+        time.sleep(3)
     p1 = ctx.renderer.position_ms()
     ctx.phone.key("KEYCODE_SLEEP")
     time.sleep(30)
@@ -843,6 +899,38 @@ def no_crash(ctx: Context) -> Result:
                   {"lines": stack[:30]})
 
 
+def crossfade(ctx: Context) -> Result:
+    """With Morphe's crossfade on (a second player for the next song, a pause right before each
+    skip), skips on the phone and on the TV still move both, and no pause reaches the TV."""
+    if ctx.control.cmd("setup", crossfade="true").get("restart"):
+        started = _start_app(ctx)
+        if started.status != "pass":
+            return Result("env", f"restart with crossfade: {started.detail}")
+    try:
+        ctx.ui.dismiss_dialogs()
+        started = start_cast(ctx)
+        if started.status != "pass":
+            return Result("fail", f"cast start: {started.detail}")
+        if not renderer_state_is(ctx, "PLAYING", 25):
+            return Result("fail", f"renderer state {ctx.renderer.state()}")
+        since = ctx.logs.mark()
+        results = {"phone_next": phone_next(ctx), "tv_next": tv_next(ctx)}
+        pauses = ctx.logs.find_all(r"Local pause, mirrored to the renderer", since)
+        playing = renderer_state_is(ctx, "PLAYING", 10)
+        evidence = {name: f"{r.status}: {r.detail}" for name, r in results.items()}
+        evidence["pauses"] = pauses[:3]
+        problems = [f"{name}: {r.detail}" for name, r in results.items() if r.status != "pass"]
+        problems += [p for p, bad in [("a skip paused the TV", pauses), ("TV not playing", not playing)] if bad]
+        return Result("fail" if problems else "pass", ", ".join(problems), evidence)
+    finally:
+        try:
+            ctx.control.cmd("stop")
+        except Exception:
+            pass
+        if ctx.control.cmd("setup", crossfade="false").get("restart"):
+            _start_app(ctx)
+
+
 def media_session(ctx: Context) -> Result:
     """The cast session followed the app's media session (local controls, queue, playlist)."""
     if not ctx.logs.find_all(r"Cast session started"):
@@ -877,11 +965,13 @@ SCENARIOS = [
     ("tv_next", tv_next, {"music"}),
     ("song_mode", song_mode, {"music"}),
     ("video_mode", video_mode, {"music"}),
+    ("shorts_ignored", shorts_ignored, {"yt"}),
     ("screen_lock", screen_lock, {"yt", "music"}),
     ("stop_cast", stop_cast, {"yt", "music"}),
     ("hls_playback", hls_playback, {"yt"}),
     ("live_hls", live_hls, {"yt"}),
     ("avtransport_next", avtransport_next, {"music"}),
+    ("crossfade", crossfade, {"music"}),
     ("media_session", media_session, {"yt", "music"}),
     ("no_crash", no_crash, {"yt", "music"}),
 ]

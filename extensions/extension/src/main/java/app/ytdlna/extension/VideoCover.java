@@ -84,7 +84,8 @@ final class VideoCover {
     private static void scan() {
         Activity activity = activityRef.get();
         CastSession session = CastSession.active();
-        if (activity == null || session == null) {
+        // Shorts or a feed preview in front play on the phone: nothing to cover.
+        if (activity == null || session == null || MorpheState.sidePlayer() != null) {
             removeAll();
             return;
         }

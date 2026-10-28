@@ -24,6 +24,10 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         LocalPlayer.Listener, Renderer.Listener {
     /** Position differences below this are treated as normal drift, not as a seek. */
     private static final long SEEK_THRESHOLD_MS = 3000;
+    /** How long a title with only SABR streams waits for direct ones. */
+    private static final long SABR_WAIT_MS = 10_000;
+    /** A position this close to our last correction is that correction. */
+    private static final long CORRECTION_MATCH_MS = 1500;
     /** After loading a title, position changes on the phone are ignored for this long. */
     private static final long LOAD_SETTLE_MS = 2500;
     /** After loading a title, renderer events are ignored for this long. */
@@ -94,6 +98,14 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private volatile String loadingVideoId;
     private volatile boolean stopped;
     private volatile String rendererState = "";
+    /** The renderer's state before it started buffering (TRANSITIONING). */
+    private String stateBeforeTransition = "";
+    /** The side player (Shorts, feed) in front, null for the main player. Main thread. */
+    private volatile String sidePlayer;
+    /** A title the renderer moved on to while a side player was in front. */
+    private String pendingFollow;
+    /** A title whose direct streams are awaited (only SABR ones so far), and one cast without. */
+    private volatile String waitingForStreams, sabrFallbackFor;
     private int rendererVolume = -1;
 
     // Last local playback state, for telling seeks, pauses and skips apart.
@@ -220,6 +232,10 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             rememberState(state);
             return;
         }
+        if (sidePlayerInFront()) {
+            rememberState(state);
+            return;
+        }
         int newState = state.getState();
         long now = SystemClock.elapsedRealtime();
 
@@ -235,7 +251,12 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 expected += (long) ((state.getLastPositionUpdateTime() - lastUpdateTime) * lastSpeed);
             }
             long position = state.getPosition();
-            if (newState != PlaybackState.STATE_BUFFERING && Math.abs(position - expected) > SEEK_THRESHOLD_MS) {
+            // The phone may hold the corrected position for a while (it buffers there first):
+            // reaching it late is still our correction, not the user's seek. Sent to the
+            // renderer, it would buffer again and fall further behind.
+            boolean atCorrection = correctedTo >= 0 && Math.abs(position - correctedTo) < CORRECTION_MATCH_MS;
+            if (newState != PlaybackState.STATE_BUFFERING && !atCorrection
+                    && Math.abs(position - expected) > SEEK_THRESHOLD_MS) {
                 Log.d("Local seek to " + position + " ms");
                 onRenderer("Seek", r -> r.seek(position, local.isPlaying()), "PLAYING", "PAUSED_PLAYBACK");
             }
@@ -282,7 +303,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
 
     private void rememberState(PlaybackState state) {
         if (state.getState() != lastState) {
-            Log.d("Phone state " + lastState + " -> " + state.getState() + " at " + state.getPosition() + " ms");
+            Log.d("Phone state " + lastState + " -> " + state.getState() + " at " + state.getPosition() + " ms "
+                    + MorpheState.summary());
         }
         if (state.getState() == PlaybackState.STATE_PAUSED) {
             if (lastState != PlaybackState.STATE_PAUSED) localPausedSince = SystemClock.elapsedRealtime();
@@ -353,6 +375,25 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private void load(StreamInfo info) {
         if (info == null || stopped) return;
         if (info.videoId.equals(loadedVideoId) || info.videoId.equals(loadingVideoId)) return;
+        if (info.isSabrOnly() && !info.videoId.equals(sabrFallbackFor)) {
+            // The full streams usually follow within seconds: wait for them rather than casting
+            // the 360p fallback. Without them, the fallback after all.
+            if (!info.videoId.equals(waitingForStreams)) {
+                waitingForStreams = info.videoId;
+                Log.d("Only SABR streams for " + info.videoId + " yet, waiting for direct ones");
+                main.postDelayed(() -> {
+                    if (stopped || !info.videoId.equals(waitingForStreams)) return;
+                    waitingForStreams = null;
+                    sabrFallbackFor = info.videoId;
+                    if (!info.videoId.equals(StreamCapture.currentVideoId())) return;
+                    StreamInfo latest = StreamCapture.get(info.videoId);
+                    Log.d("No direct streams for " + info.videoId + ", casting what there is");
+                    load(latest != null ? latest : info);
+                }, SABR_WAIT_MS);
+            }
+            return;
+        }
+        if (info.videoId.equals(waitingForStreams)) waitingForStreams = null;
         loadingVideoId = info.videoId;
         rendererThread.execute(() -> {
             Renderer r = renderer;
@@ -513,11 +554,21 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         String previous = rendererState;
         rendererState = value;
         Log.d("Renderer " + previous + " -> " + value);
+        if ("TRANSITIONING".equals(value)) {
+            if (!"TRANSITIONING".equals(previous)) stateBeforeTransition = previous;
+        }
+        // Coming out of buffering, the state it came from counts.
+        String from = "TRANSITIONING".equals(previous) ? stateBeforeTransition : previous;
         Renderer r = renderer;
         // Before our first title, states are the renderer's initial state (sent when subscribing).
         if (r == null || r.isEcho(value) || loadedVideoId == null) return;
+        // Buffering, and playing on after it (also once a title loaded), is no command on the
+        // TV: a pause on the phone meanwhile must win.
+        if ("TRANSITIONING".equals(value)
+                || ("PLAYING".equals(value) && !"PAUSED_PLAYBACK".equals(from))) return;
         rendererChangedAt = SystemClock.elapsedRealtime();
 
+        if (sidePlayerInFront()) return; // Not the Short or preview the user watches.
         int localState = local.stateCode();
         switch (value) {
             case "PAUSED_PLAYBACK":
@@ -561,8 +612,43 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     }
 
     /** Moves the phone to the title the renderer plays, so the app loads its streams. */
+    /**
+     * Whether Shorts or a feed preview are in front of the main player. Their player is the
+     * user's on the phone: it plays there with sound and picture, is not followed and does not
+     * follow the renderer, which plays on. Main thread.
+     */
+    private boolean sidePlayerInFront() {
+        String side = MorpheState.sidePlayer();
+        if (side != null) {
+            if (!side.equals(sidePlayer)) {
+                Log.i("The " + side + " player is in front: it plays on the phone, the renderer plays on");
+                sidePlayer = side;
+                CastAudio.setMuted(false);
+                VideoCover.update(null, null);
+            }
+            return true;
+        }
+        if (sidePlayer != null) {
+            sidePlayer = null;
+            // YouTube stopped the main player for the Short; it goes on from the renderer's
+            // position once the user plays it (the sync moves it there).
+            Log.i("Main player in front again");
+            CastAudio.setMuted(true);
+            VideoCover.update(null, null);
+            String follow = pendingFollow;
+            if (follow != null) main.post(() -> followRenderer(follow));
+        }
+        return false;
+    }
+
     private void followRenderer(String videoId) {
         if (videoId.equals(StreamCapture.currentVideoId())) return;
+        if (sidePlayerInFront()) {
+            // Not while Shorts or a preview are in front: once the main player is back.
+            pendingFollow = videoId;
+            return;
+        }
+        pendingFollow = null;
         ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
         correctedTo = -1;
         if (local.skipTo(videoId)) Log.i("Phone follows the renderer to " + videoId);
@@ -577,6 +663,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         main.postDelayed(this::syncPosition, SYNC_INTERVAL_MS);
         // A rare check next to the events, for changes a renderer did not report.
         if (!pollOnly) pollState();
+        if (sidePlayerInFront()) return;
         long pausedSince = localPausedSince;
         if ("PLAYING".equals(rendererState) && local.stateCode() == PlaybackState.STATE_PAUSED
                 && pausedSince > 0 && SystemClock.elapsedRealtime() - pausedSince > SELF_PAUSE_MS
