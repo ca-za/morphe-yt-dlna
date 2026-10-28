@@ -175,9 +175,16 @@ final class OpenHomeRenderer extends Renderer {
             Log.d("Playing title " + playingVideo + " not in the app's queue yet");
             return false;
         }
-        if (!queue.get(playing).videoId.equals(playingVideo)) {
+        String alias = queue.get(playing).videoId;
+        if (!alias.equals(playingVideo)) {
             // The playing title under another id in the queue: it is on the renderer already.
-            trackIdByVideo.put(queue.get(playing).videoId, currentTrackId);
+            // Only while the phone still plays it; once it moved on, the active entry is
+            // another title (it gets its own entry).
+            if (!playingVideo.equals(StreamCapture.currentVideoId()) || trackIdByVideo.containsKey(alias)) {
+                Log.d("Playing title " + playingVideo + " not in the app's queue now");
+                return false;
+            }
+            trackIdByVideo.put(alias, currentTrackId);
         }
         List<Track> missing = new ArrayList<>();
         for (LocalPlayer.QueueEntry entry : queue) {

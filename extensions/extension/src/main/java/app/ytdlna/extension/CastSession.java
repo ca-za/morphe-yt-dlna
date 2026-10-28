@@ -166,11 +166,23 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         // known before the first title is loaded on the renderer.
         local.attach(() -> {
             // The running title still plays with all streams: reload it with the reduced ones.
-            local.reload();
+            if (local.reload()) main.postDelayed(this::afterReload, local.reloadRemaining() + 300);
             PlaybackState state = local.state();
             if (state != null) rememberState(state);
         });
         load(first);
+    }
+
+    /**
+     * Titles the phone passes while reloading are ignored. If the user skipped meanwhile (to
+     * the same neighbouring title, say), the phone stays there: load what it plays now.
+     */
+    private void afterReload() {
+        if (stopped) return;
+        String current = StreamCapture.currentVideoId();
+        if (current == null || current.equals(loadedVideoId) || current.equals(loadingVideoId)) return;
+        Log.i("Phone moved to " + current + " while reloading, loading it");
+        onVideoLoaded(current);
     }
 
     void stop(boolean stopRenderer) {
