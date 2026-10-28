@@ -41,25 +41,34 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # Semantic release runs its own Gradle build command.
-      # Only dev and main branch will generate a release as specified by .releaserc
-      - name: Release
+      # dev: v0.1.<n>-alpha, every release counts the last number up (our own script).
+      - name: Release (dev)
+        if: github.ref == 'refs/heads/dev'
+        id: dev_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/release_dev.sh
+
+      # main (stable releases): semantic release runs its own Gradle build command.
+      - name: Release (main)
+        if: github.ref == 'refs/heads/main'
         uses: cycjimmy/semantic-release-action@v6
         id: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attest
-        if: steps.release.outputs.new_release_published == 'true'
+        if: steps.release.outputs.new_release_published == 'true' || steps.dev_release.outputs.released == 'true'
         uses: actions/attest-build-provenance@v4
         with:
-          subject-name: 'Morphe Patches ${{ steps.release.outputs.new_release_git_tag }}'
+          subject-name: 'Morphe Patches ${{ steps.release.outputs.new_release_git_tag || steps.dev_release.outputs.tag }}'
           subject-path: patches/build/libs/patches-*.mpp
 
-      # Always verify compilation when semantic-release did not publish a release.
-      # This covers non-main/dev branches, chore commits, docs commits, etc.
+      # Always verify compilation when no release was published.
+      # This covers other branches, chore commits, docs commits, etc.
       - name: Verify project compiles
-        if: steps.release.outputs.new_release_published != 'true'
+        if: steps.release.outputs.new_release_published != 'true' && steps.dev_release.outputs.released != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./gradlew :patches:buildAndroid clean --no-daemon
