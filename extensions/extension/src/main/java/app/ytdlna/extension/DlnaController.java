@@ -159,7 +159,9 @@ final class DlnaController {
         if (track.durationMs > 0) {
             item.append(" duration=\"").append(Track.upnpTime(track.durationMs)).append(".000\"");
         }
-        item.append(">").append(escape(uri)).append("</res></item></DIDL-Lite>");
+        item.append(">").append(escape(uri)).append("</res>");
+        if (!track.extrasUrl.isEmpty()) item.append(RendererExtras.didlDesc(track.videoId, track.extrasUrl));
+        item.append("</item></DIDL-Lite>");
         return item.toString();
     }
 

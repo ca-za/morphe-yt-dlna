@@ -211,12 +211,26 @@ fn serve_live<W: Write>(
 }
 
 fn write_text<W: Write>(out: &mut W, mime: &str, body: &[u8], request: &Request, head_only: bool) -> io::Result<bool> {
+    // Texts can change (the extras document grows as data arrives): an ETag lets clients poll
+    // them cheaply, and no-cache makes them ask each time.
+    let etag = format!("\"{:016x}\"", fnv1a(body));
+    if request.if_none_match.as_deref() == Some(etag.as_str()) {
+        http::write_head(
+            out,
+            304,
+            &[("ETag", etag), ("Cache-Control", "no-cache".to_string()), ("Content-Length", "0".to_string())],
+            request.keep_alive,
+        )?;
+        return Ok(request.keep_alive);
+    }
     http::write_head(
         out,
         200,
         &[
             ("Content-Type", format!("{mime}; charset=utf-8")),
             ("Content-Length", body.len().to_string()),
+            ("ETag", etag),
+            ("Cache-Control", "no-cache".to_string()),
         ],
         request.keep_alive,
     )?;
@@ -224,6 +238,16 @@ fn write_text<W: Write>(out: &mut W, mime: &str, body: &[u8], request: &Request,
         out.write_all(body)?;
     }
     Ok(request.keep_alive)
+}
+
+/// FNV-1a: a stable, dependency-free hash for ETags.
+fn fnv1a(data: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in data {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 /// The media playlist, built from the stream's segment index on first use.

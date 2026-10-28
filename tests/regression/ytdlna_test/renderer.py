@@ -39,6 +39,13 @@ class Renderer:
             "SOAPACTION": f'"{service_type}#{action}"'})
         return urllib.request.urlopen(request, timeout=5).read().decode("utf-8", "replace")
 
+    def sink_protocols(self) -> str:
+        """The formats the renderer accepts (ConnectionManager), "" if it does not say."""
+        try:
+            return unescape(_tag(self.soap("ConnectionManager", "GetProtocolInfo"), "Sink"))
+        except Exception:
+            return ""
+
     def state(self) -> str:
         if self.openhome:
             return OPENHOME_STATES.get(_tag(self.soap("Playlist", "TransportState"), "Value"), "?")
@@ -52,13 +59,14 @@ class Renderer:
         h, m, s = (rel or "0:0:0").split(":")
         return int((int(h) * 3600 + int(m) * 60 + float(s)) * 1000)
 
-    def metadata(self, avtransport: bool = False) -> dict:
-        """Metadata of the current title (from AVTransport if asked, otherwise OpenHome Info if there)."""
+    def didl(self, avtransport: bool = False) -> str:
+        """DIDL-Lite of the current title (from AVTransport if asked, otherwise OpenHome Info if there)."""
         if "Info" in self.services and self.use_openhome and not avtransport:
-            didl = unescape(_tag(self.soap("Info", "Track"), "Metadata"))
-        else:
-            didl = unescape(_tag(self.media_info(), "CurrentURIMetaData"))
-        return _didl(didl)
+            return unescape(_tag(self.soap("Info", "Track"), "Metadata"))
+        return unescape(_tag(self.media_info(), "CurrentURIMetaData"))
+
+    def metadata(self, avtransport: bool = False) -> dict:
+        return _didl(self.didl(avtransport))
 
     def media_info(self) -> str:
         return self.soap("AVTransport", "GetMediaInfo", "<InstanceID>0</InstanceID>")

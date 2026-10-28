@@ -147,6 +147,8 @@ final class AvTransportRenderer extends Renderer {
         StreamInfo captured = StreamCapture.get(next.videoId);
         if (captured != null) registerAuto(captured);
         Track track = Track.fromQueue(next);
+        // Its extras are served once the phone plays it; until then the renderer gets a 404.
+        if (RendererExtras.wanted(device)) track.extrasUrl = baseUrl + RendererExtras.path(track.videoId);
         // Its cover and length from the music database (one lookup, after the current title plays).
         covers.prefetch(java.util.Collections.singletonList(track));
         String art = covers.forTrack(track, false);

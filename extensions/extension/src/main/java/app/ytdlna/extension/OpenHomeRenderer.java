@@ -208,6 +208,8 @@ final class OpenHomeRenderer extends Renderer {
             StreamInfo captured = StreamCapture.get(entry.videoId);
             if (captured != null) registerAuto(captured);
             Track track = Track.fromQueue(entry);
+            // Its extras are served once the phone plays it; until then the renderer gets a 404.
+            if (RendererExtras.wanted(device)) track.extrasUrl = baseUrl + RendererExtras.path(track.videoId);
             try {
                 insert(after == null ? 0 : after, track, covers.forTrack(track, false));
             } catch (Exception e) {

@@ -22,22 +22,16 @@ import java.util.function.IntConsumer;
  */
 final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         LocalPlayer.Listener, Renderer.Listener {
-    /** Position differences below this are treated as normal drift, not as a seek. */
-    private static final long SEEK_THRESHOLD_MS = 3000;
+    /** A title loaded further in than this starts there on the renderer too. */
+    private static final long START_POSITION_MS = 3000;
     /** How long a title with only SABR streams waits for direct ones. */
     private static final long SABR_WAIT_MS = 10_000;
-    /** A position this close to our last correction is that correction. */
-    private static final long CORRECTION_MATCH_MS = 1500;
-    /** After loading a title, position changes on the phone are ignored for this long. */
+    /** After loading a title or correcting the phone, its position is not corrected for this long. */
     private static final long LOAD_SETTLE_MS = 2500;
     /** After loading a title, renderer events are ignored for this long. */
     private static final long RENDERER_LOAD_SETTLE_MS = 5000;
-    /** A local pause is only forwarded if it is still there after this delay. */
-    private static final long PAUSE_DEBOUNCE_MS = 1200;
     /** Larger differences between phone and renderer position are corrected on the phone. */
     private static final long DRIFT_THRESHOLD_MS = 4000;
-    /** After a change on the TV, the phone finishing buffering does not resume the TV. */
-    private static final long RENDERER_PAUSE_WINS_MS = 10_000;
     private static final long SYNC_INTERVAL_MS = 10_000;
     /** Without renderer events, polling is the only way to notice changes on the TV. */
     private static final long POLL_INTERVAL_MS = 2000;
@@ -55,8 +49,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private int confirmGeneration;
     /** When the last renderer state (event or poll) was handled. */
     private volatile long lastStateAt;
-    /** When the renderer last changed its state on its own (its remote, not our command). */
-    private volatile long rendererChangedAt;
 
     private static CastSession active;
 
@@ -108,28 +100,19 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private volatile String waitingForStreams, sabrFallbackFor;
     private int rendererVolume = -1;
 
-    // Last local playback state, for telling seeks, pauses and skips apart.
+    /** The phone's last playback state. */
     private int lastState = -1;
-    private long lastPosition;
-    private long lastUpdateTime;
-    private float lastSpeed;
-    private long lastQueueItemId = -1;
+    /** The phone's position is not corrected before this (a title loads, a correction settles). */
     private volatile long ignorePositionUntil;
-    /** Where the last position correction put the phone, and when; -1 for none. */
-    private volatile long correctedTo = -1;
-    private volatile long correctedAt;
     /** The loaded title is a live stream. */
     private volatile boolean live;
-    /** Pauses before this are the player's reaction to our correction seek, not the user's. */
-    private volatile long seekPauseUntil;
-    /** A correction seek is settling (main thread only). */
-    private boolean correcting;
-    /** A player pausing because of a seek does so right away. */
-    private static final long SEEK_PAUSE_MS = 700;
     /** When the phone last went to paused, 0 if it is not paused. */
     private volatile long localPausedSince;
-    /** A phone pause longer than this without the renderer pausing was not made by the user. */
-    private static final long SELF_PAUSE_MS = PAUSE_DEBOUNCE_MS + 3000;
+    /**
+     * A phone pause longer than this while the renderer plays is the player's own (a user's
+     * pause would have paused the renderer): the phone follows the renderer and plays on.
+     */
+    private static final long SELF_PAUSE_MS = 4000;
 
     // SponsorBlock diagnostics: how Morphe's skips on the phone reach the TV.
     /** How often the TV position is checked against the segments (debug log switch on). */
@@ -141,6 +124,10 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private SponsorBlock.Segment tvSegment;
     private long tvEnteredAt, tvEnteredPosition;
     private volatile boolean sbWatchQueued;
+    /** Length of the title the extras are published for. */
+    private volatile long extrasDurationMs;
+    /** The extras document is complete after this, with the segments Morphe has by then. */
+    private static final long EXTRAS_TIMEOUT_MS = 15_000;
 
     private CastSession(Context context, DlnaDevice device, String streamHost) {
         this.context = context;
@@ -238,106 +225,66 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
 
     // region Phone -> renderer
 
+    /**
+     * The phone's playback state. Only followed and logged: what reaches the renderer are the
+     * commands given to the phone's player ({@link #onIntent}), not changes of its state, which
+     * also come from buffering, loading, ads and the player itself.
+     */
     @Override
     public void onLocalState(PlaybackState state) {
         if (stopped) return;
-        if (local.isReloading()) {
-            // The phone is reloading its title; nothing of this is a user action.
-            rememberState(state);
-            return;
-        }
-        if (sidePlayerInFront()) {
-            rememberState(state);
-            return;
-        }
-        int newState = state.getState();
-        long now = SystemClock.elapsedRealtime();
         if (DlnaCast.debugLogEnabled(context)) {
             // Raw media session state next to the player's own time: shows stale positions.
-            Log.d("Phone session: state " + newState + " at " + state.getPosition() + " ms (updated "
-                    + (now - state.getLastPositionUpdateTime()) + " ms ago, speed " + state.getPlaybackSpeed()
-                    + "), player at " + MorpheState.videoTime() + " ms");
+            Log.d("Phone session: state " + state.getState() + " at " + state.getPosition() + " ms (updated "
+                    + (SystemClock.elapsedRealtime() - state.getLastPositionUpdateTime()) + " ms ago, speed "
+                    + state.getPlaybackSpeed() + "), player at " + MorpheState.videoTime() + " ms");
         }
-
-        // Right after a correction only the corrected position is expected; a jump elsewhere is
-        // the user's seek.
-        boolean afterCorrection = now <= ignorePositionUntil && correctedTo >= 0
-                && newState != PlaybackState.STATE_BUFFERING
-                && Math.abs(state.getPosition() - (correctedTo + (now - correctedAt))) > SEEK_THRESHOLD_MS;
-        SponsorBlock.Segment sbSkip = sponsorSkip(state);
-        if (sbSkip != null) logTvAt("when the phone skipped " + sbSkip, sbSkip);
-        String notSent = null;
-        if (!live && lastState != -1 && (now > ignorePositionUntil || afterCorrection) && loadedVideoId != null
-                && loadedVideoId.equals(StreamCapture.currentVideoId())) {
-            long expected = lastPosition;
-            if (lastState == PlaybackState.STATE_PLAYING) {
-                expected += (long) ((state.getLastPositionUpdateTime() - lastUpdateTime) * lastSpeed);
-            }
-            long position = state.getPosition();
-            // The phone may hold the corrected position for a while (it buffers there first):
-            // reaching it late is still our correction, not the user's seek. Sent to the
-            // renderer, it would buffer again and fall further behind.
-            boolean atCorrection = correctedTo >= 0 && Math.abs(position - correctedTo) < CORRECTION_MATCH_MS;
-            if (newState != PlaybackState.STATE_BUFFERING && !atCorrection
-                    && Math.abs(position - expected) > SEEK_THRESHOLD_MS) {
-                Log.d("Local seek to " + position + " ms (expected " + expected + " ms, player at "
-                        + MorpheState.videoTime() + " ms)");
-                onRenderer("Seek", r -> r.seek(position, local.isPlaying()), "PLAYING", "PAUSED_PLAYBACK");
-            } else {
-                notSent = newState == PlaybackState.STATE_BUFFERING ? "the phone reported it while buffering"
-                        : atCorrection ? "it is at our last correction (" + correctedTo + " ms)"
-                        : "less than " + SEEK_THRESHOLD_MS + " ms from the expected " + expected + " ms";
-            }
-        } else {
-            notSent = live ? "live stream" : lastState == -1 ? "no earlier phone state"
-                    : !(now > ignorePositionUntil || afterCorrection) ? "within the settle time after a load or correction"
-                    : "the phone's title " + StreamCapture.currentVideoId() + " is not the cast one " + loadedVideoId;
-        }
-        if (sbSkip != null) {
-            Log.i("SponsorBlock skip on the phone: " + sbSkip + ", phone now at " + state.getPosition() + " ms, "
-                    + (notSent == null ? "sent to the TV" : "NOT sent to the TV: " + notSent));
-            // Where the TV is once the seek had time to land.
-            main.postDelayed(() -> logTvAt("3 s after the phone skipped " + sbSkip, sbSkip), 3000);
-        }
-        if (newState != lastState) {
-            boolean resumeIntent = newState == PlaybackState.STATE_PLAYING
-                    // Play pressed while paused: the player buffers first. Resume the renderer
-                    // right away, so it does not depend on the phone's own (reduced) stream.
-                    || (newState == PlaybackState.STATE_BUFFERING && lastState == PlaybackState.STATE_PAUSED);
-            // The end of buffering is no play by the user: not when the renderer plays anyway,
-            // and not right after a pause on the TV (it would undo that pause).
-            boolean bufferingEnded = lastState == PlaybackState.STATE_BUFFERING
-                    && newState == PlaybackState.STATE_PLAYING
-                    && ("PLAYING".equals(rendererState)
-                    || now - rendererChangedAt < RENDERER_PAUSE_WINS_MS);
-            if (resumeIntent && lastState != -1 && lastState != PlaybackState.STATE_PLAYING && !bufferingEnded) {
-                Log.d("Local play, sent to the renderer");
-                onRenderer("Play", Renderer::resume, "PLAYING");
-            } else if (newState == PlaybackState.STATE_PAUSED && !(correcting && now <= seekPauseUntil)) {
-                // Switching titles also reports "paused" for a moment: another queue item or
-                // the position jumping back to the start means a skip, not a pause.
-                long queueItem = state.getActiveQueueItemId();
-                boolean skipping = (lastQueueItemId != -1 && queueItem != lastQueueItemId)
-                        || (state.getPosition() < 1500 && lastPosition > 5000);
-                String video = StreamCapture.currentVideoId();
-                if (!skipping) {
-                    // While a title loads or settles, pauses come and go: check once it settled.
-                    long delay = Math.max(PAUSE_DEBOUNCE_MS, ignorePositionUntil - now + PAUSE_DEBOUNCE_MS);
-                    main.postDelayed(() -> {
-                        PlaybackState current = local.state();
-                        // The TV changed its state since: its command is newer and wins.
-                        if (stopped || local.isReloading() || "PAUSED_PLAYBACK".equals(rendererState)
-                                || rendererChangedAt > now
-                                || current == null || current.getState() != PlaybackState.STATE_PAUSED
-                                || current.getActiveQueueItemId() != queueItem
-                                || video == null || !video.equals(StreamCapture.currentVideoId())) return;
-                        Log.d("Local pause, mirrored to the renderer");
-                        onRenderer("Pause", Renderer::pause, "PAUSED_PLAYBACK");
-                    }, delay);
-                }
-            }
-        }
+        sidePlayerInFront();
         rememberState(state);
+    }
+
+    /**
+     * A play, pause or seek the user (or SponsorBlock) gave the phone's player, see
+     * {@link PlayerIntents}: sent to the renderer, whose state the phone then follows.
+     * Main thread.
+     */
+    void onIntent(String kind, long positionMs, String caller) {
+        if (stopped || loadedVideoId == null) return;
+        if (sidePlayerInFront()) return;
+        switch (kind) {
+            case "seek":
+                // A position only means something on the cast title, and not while the phone
+                // passes through another title to reload its own.
+                String video = StreamCapture.currentVideoId();
+                if (live || local.isReloading() || !loadedVideoId.equals(video)) {
+                    Log.d("Phone seek on " + video + (local.isReloading() ? " while reloading" : "")
+                            + ", not sent to the renderer");
+                    return;
+                }
+                SponsorBlock.Segment skipped = caller.contains("SponsorBlock") ? segmentEndingAt(positionMs) : null;
+                if (skipped != null) logTvAt("when the phone skipped " + skipped, skipped);
+                Log.d("Phone seek to " + positionMs + " ms by " + caller + ", sent to the renderer");
+                // Until the renderer got there, its old position must not pull the phone back.
+                ignorePositionUntil = SystemClock.elapsedRealtime() + RENDERER_LOAD_SETTLE_MS;
+                onRenderer("Seek", r -> r.seek(positionMs, !"PAUSED_PLAYBACK".equals(rendererState)),
+                        "PLAYING", "PAUSED_PLAYBACK");
+                if (skipped != null) {
+                    Log.i("SponsorBlock skip on the phone: " + skipped + ", phone now at " + positionMs
+                            + " ms, sent to the TV");
+                    main.postDelayed(() -> logTvAt("3 s after the phone skipped " + skipped, skipped), 3000);
+                }
+                break;
+            case "pause":
+                Log.d("Phone pause by " + caller + ", sent to the renderer");
+                onRenderer("Pause", Renderer::pause, "PAUSED_PLAYBACK");
+                break;
+            case "play":
+                Log.d("Phone play by " + caller + ", sent to the renderer");
+                onRenderer("Play", Renderer::resume, "PLAYING");
+                break;
+            default:
+                break;
+        }
     }
 
     private void rememberState(PlaybackState state) {
@@ -351,10 +298,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             localPausedSince = 0;
         }
         lastState = state.getState();
-        lastPosition = state.getPosition();
-        lastUpdateTime = state.getLastPositionUpdateTime();
-        lastSpeed = state.getPlaybackSpeed();
-        lastQueueItemId = state.getActiveQueueItemId();
     }
 
     @Override
@@ -388,7 +331,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     public void onVideoLoaded(String videoId) {
         if (local.isPassingThrough(videoId)) return;
         ignorePositionUntil = Math.max(ignorePositionUntil, SystemClock.elapsedRealtime() + LOAD_SETTLE_MS);
-        correctedTo = -1;
         StreamInfo info = StreamCapture.get(videoId);
         // Otherwise loaded once the streams are captured.
         if (info != null) load(info);
@@ -454,11 +396,22 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 LocalPlayer.QueueEntry entry = local.entry(info.videoId);
                 if (track.artist.isEmpty() && entry != null) track.artist = entry.artist;
                 String art = covers.forTrack(track, true);
+                if (RendererExtras.wanted(device)) {
+                    // Published before the load, so the renderer finds it right away.
+                    track.extrasUrl = r.baseUrl + RendererExtras.path(info.videoId);
+                    extrasDurationMs = track.durationMs;
+                    if (!RendererExtras.publish(info.videoId, track.durationMs, false)) {
+                        main.postDelayed(() -> {
+                            if (!stopped && info.videoId.equals(loadedVideoId)) {
+                                RendererExtras.publish(info.videoId, extrasDurationMs, true);
+                            }
+                        }, EXTRAS_TIMEOUT_MS);
+                    }
+                }
                 Log.i("Loading " + info.videoId + " (" + media.description + ") \"" + track.title
                         + "\" by \"" + track.artist + "\" on " + device);
 
                 ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
-                correctedTo = -1;
                 r.expectEcho(RENDERER_LOAD_SETTLE_MS);
                 r.load(new Renderer.Load(info, media, track, art, queue));
                 loadedVideoId = info.videoId;
@@ -470,7 +423,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
 
                 // Continue where the phone is.
                 long position = local.positionOf(info.videoId);
-                if (!live && position > SEEK_THRESHOLD_MS) {
+                if (!live && position > START_POSITION_MS) {
                     r.seek(position, local.stateCode() == PlaybackState.STATE_NONE || local.isPlaying());
                 }
                 // The phone reports "paused" for a moment while switching titles, so only
@@ -605,7 +558,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         // TV: a pause on the phone meanwhile must win.
         if ("TRANSITIONING".equals(value)
                 || ("PLAYING".equals(value) && !"PAUSED_PLAYBACK".equals(from))) return;
-        rendererChangedAt = SystemClock.elapsedRealtime();
 
         if (sidePlayerInFront()) return; // Not the Short or preview the user watches.
         int localState = local.stateCode();
@@ -689,7 +641,6 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         }
         pendingFollow = null;
         ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
-        correctedTo = -1;
         if (local.skipTo(videoId)) Log.i("Phone follows the renderer to " + videoId);
     }
 
@@ -707,9 +658,16 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         if ("PLAYING".equals(rendererState) && local.stateCode() == PlaybackState.STATE_PAUSED
                 && pausedSince > 0 && SystemClock.elapsedRealtime() - pausedSince > SELF_PAUSE_MS
                 && SystemClock.elapsedRealtime() > ignorePositionUntil && !local.isReloading()) {
-            // A pause by the user would have paused the renderer within the debounce time.
+            // A pause by the user would have paused the renderer.
             Log.i("Phone paused on its own while the renderer plays, resuming it");
             local.play();
+        }
+        if ("PAUSED_PLAYBACK".equals(rendererState) && local.isPlaying()
+                && SystemClock.elapsedRealtime() > ignorePositionUntil && !local.isReloading()) {
+            // A play by the user would have resumed the renderer: the player resumed on its own
+            // (after a reload, say). It follows the renderer.
+            Log.i("Phone plays while the renderer is paused, pausing it");
+            local.pause();
         }
         if (live || !"PLAYING".equals(rendererState) && !rendererState.isEmpty()) return;
         rendererThread.execute(() -> {
@@ -722,25 +680,11 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 if (Math.abs(remote - phone) > DRIFT_THRESHOLD_MS) {
                     Log.i("Correcting phone position " + phone + " -> " + remote + " ms");
                     main.post(() -> {
-                        // Paused in the meantime: that pause wins, it is mirrored to the renderer.
                         if (stopped || !local.isPlaying()) return;
-                        long seekAt = SystemClock.elapsedRealtime();
-                        ignorePositionUntil = seekAt + LOAD_SETTLE_MS;
-                        seekPauseUntil = seekAt + SEEK_PAUSE_MS;
-                        correctedTo = remote;
-                        correctedAt = seekAt;
-                        correcting = true;
+                        // A pause of the player after this seek is its own: the self-pause check
+                        // resumes it, like the renderer plays on.
+                        ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
                         local.seekTo(remote);
-                        // Some players pause right after a seek; keep it playing like the renderer.
-                        // A later pause is the user's and stays.
-                        main.postDelayed(() -> {
-                            correcting = false;
-                            long pauseStart = localPausedSince;
-                            if (!stopped && local.stateCode() == PlaybackState.STATE_PAUSED
-                                    && pauseStart > 0 && pauseStart <= seekAt + SEEK_PAUSE_MS) {
-                                local.play();
-                            }
-                        }, 1500);
                     });
                 }
             } catch (Exception e) {
@@ -763,29 +707,19 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             for (SponsorBlock.Segment s : sbSegments) list.append("\n  ").append(s);
             Log.i("SponsorBlock: " + sbSegments.size() + " segments for " + SponsorBlock.videoId()
                     + " (cast plays " + loadedVideoId + ")" + list);
+            // Renderers with extras get the segments as soon as Morphe has them.
+            String video = loadedVideoId;
+            if (video != null && video.equals(SponsorBlock.videoId()) && RendererExtras.wanted(device)) {
+                RendererExtras.publish(video, extrasDurationMs, false);
+            }
         }
         return sbSegments;
     }
 
-    /**
-     * The segment the phone just skipped, if this state is such a jump: from inside (or right
-     * before) a segment to its end. Also catches the user's skip button.
-     */
-    private SponsorBlock.Segment sponsorSkip(PlaybackState state) {
-        if (lastState == -1) return null;
-        List<SponsorBlock.Segment> segments = sponsorSegments();
-        if (segments.isEmpty()) return null;
-        long expected = lastPosition;
-        if (lastState == PlaybackState.STATE_PLAYING) {
-            expected += (long) ((state.getLastPositionUpdateTime() - lastUpdateTime) * lastSpeed);
-        }
-        long position = state.getPosition();
-        if (Math.abs(position - expected) < 1000) return null;
-        for (SponsorBlock.Segment s : segments) {
-            if (Math.abs(position - s.end) <= 1500 && expected >= s.start - 2000 && expected < s.end - 1000) {
-                Log.d("Phone jump " + expected + " -> " + position + " ms matches the end of " + s);
-                return s;
-            }
+    /** The segment SponsorBlock skips when it seeks to this position (its end), or null. */
+    private SponsorBlock.Segment segmentEndingAt(long positionMs) {
+        for (SponsorBlock.Segment s : sponsorSegments()) {
+            if (Math.abs(positionMs - s.end) <= 1500) return s;
         }
         return null;
     }

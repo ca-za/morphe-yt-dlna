@@ -6,6 +6,8 @@ pub struct Request {
     pub method: String,
     pub path: String,
     pub range: Option<String>,
+    /// If-None-Match: the ETag the client already has.
+    pub if_none_match: Option<String>,
     pub keep_alive: bool,
     pub content_length: usize,
 }
@@ -30,6 +32,7 @@ pub fn read_request<R: BufRead>(reader: &mut R) -> io::Result<Option<Request>> {
     let path = target.split('?').next().unwrap_or("/").to_string();
 
     let mut range = None;
+    let mut if_none_match = None;
     let mut content_length = 0usize;
     let mut keep_alive = version.eq_ignore_ascii_case("HTTP/1.1");
     let mut header_bytes = 0usize;
@@ -53,6 +56,8 @@ pub fn read_request<R: BufRead>(reader: &mut R) -> io::Result<Option<Request>> {
                 content_length = value.parse().unwrap_or(0);
             } else if name.eq_ignore_ascii_case("range") {
                 range = Some(value.to_string());
+            } else if name.eq_ignore_ascii_case("if-none-match") {
+                if_none_match = Some(value.to_string());
             } else if name.eq_ignore_ascii_case("connection") {
                 let value = value.to_ascii_lowercase();
                 if value.contains("close") {
@@ -67,6 +72,7 @@ pub fn read_request<R: BufRead>(reader: &mut R) -> io::Result<Option<Request>> {
         method,
         path,
         range,
+        if_none_match,
         keep_alive,
         content_length,
     }))
@@ -134,6 +140,7 @@ pub fn reason(status: u16) -> &'static str {
     match status {
         200 => "OK",
         206 => "Partial Content",
+        304 => "Not Modified",
         404 => "Not Found",
         405 => "Method Not Allowed",
         412 => "Precondition Failed",

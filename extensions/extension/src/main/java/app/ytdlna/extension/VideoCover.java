@@ -42,6 +42,12 @@ final class VideoCover {
 
     private static String artUrl = "";
     private static Bitmap art;
+    /** Dominant color of {@link #art} for the background (YouTube Music), 0 if none. */
+    private static int artColor;
+    /** Background of the cover without art, and of YouTube's. */
+    private static final int BLACK = 0xFF000000;
+    /** Where the background gradient ends (Spotify's dark gray). */
+    private static final int GRADIENT_END = 0xFF121212;
     private static String title = "";
 
     private static final Runnable scan = VideoCover::scan;
@@ -71,6 +77,7 @@ final class VideoCover {
         if (newArtUrl != null && !newArtUrl.equals(artUrl)) {
             artUrl = newArtUrl;
             art = null;
+            artColor = 0;
             loadArt(newArtUrl);
         }
         scheduleScan();
@@ -133,25 +140,43 @@ final class VideoCover {
                     new FrameLayout.LayoutParams(surface.getWidth(), surface.getHeight(), Gravity.TOP | Gravity.START));
         }
 
-        // Exactly over the video.
+        // Exactly over the video; in YouTube Music over its whole player area (the video is a
+        // 16:9 strip in it, the rest black).
+        View area = Track.musicApp ? playerArea(surface, container) : surface;
         int[] surfaceLocation = new int[2];
         int[] containerLocation = new int[2];
-        surface.getLocationInWindow(surfaceLocation);
+        area.getLocationInWindow(surfaceLocation);
         container.getLocationInWindow(containerLocation);
         int left = surfaceLocation[0] - containerLocation[0] - container.getPaddingLeft()
                 - Math.round(cover.getTranslationX());
         int top = surfaceLocation[1] - containerLocation[1] - container.getPaddingTop()
                 - Math.round(cover.getTranslationY());
         FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) cover.getLayoutParams();
-        if (params.width != surface.getWidth() || params.height != surface.getHeight()
+        if (params.width != area.getWidth() || params.height != area.getHeight()
                 || params.leftMargin != left || params.topMargin != top) {
-            params.width = surface.getWidth();
-            params.height = surface.getHeight();
+            params.width = area.getWidth();
+            params.height = area.getHeight();
             params.leftMargin = left;
             params.topMargin = top;
             cover.setLayoutParams(params);
         }
-        bind(cover, session, surface.getHeight());
+        bind(cover, session, area.getWidth(), area.getHeight());
+    }
+
+    /** YouTube Music's player view ("watch_player") around the surface, up to the container. */
+    private static View playerArea(View surface, FrameLayout container) {
+        for (ViewParent v = surface.getParent(); v instanceof View && v != container; v = v.getParent()) {
+            if ("watch_player".equals(safeName((View) v))) return (View) v;
+        }
+        return surface;
+    }
+
+    private static String safeName(View view) {
+        try {
+            return view.getResources().getResourceEntryName(view.getId());
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     /** FrameLayout or a subclass that keeps its child layout. */
@@ -169,7 +194,7 @@ final class VideoCover {
 
     private static FrameLayout createCover(ViewGroup container) {
         FrameLayout cover = new FrameLayout(container.getContext());
-        cover.setBackgroundColor(0xFF000000);
+        cover.setBackgroundColor(BLACK);
         cover.setClickable(false);
         cover.setFocusable(false);
         cover.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
@@ -196,30 +221,111 @@ final class VideoCover {
         return cover;
     }
 
-    private static void bind(FrameLayout cover, CastSession session, int height) {
+    private static void bind(FrameLayout cover, CastSession session, int width, int height) {
         LinearLayout column = (LinearLayout) cover.getChildAt(0);
         ImageView image = (ImageView) column.getChildAt(0);
         TextView text = (TextView) column.getChildAt(1);
         float density = cover.getResources().getDisplayMetrics().density;
         boolean small = height < 120 * density;
 
-        int size = Math.round(height * (small ? 0.9f : 0.55f));
+        String label = DlnaCast.t("Wird auf ", "Playing on ") + session.device.friendlyName
+                + DlnaCast.t(" abgespielt", "");
+        if (!label.contentEquals(text.getText())) text.setText(label);
+        text.setVisibility(small ? View.GONE : View.VISIBLE);
+
+        int imageWidth;
+        int imageHeight;
+        if (Track.musicApp && art != null) {
+            // YouTube Music: the cover as large as it fits, whole (not cropped), above the label.
+            int pad = Math.round((small ? 4 : 16) * density);
+            int textHeight = 0;
+            if (!small) {
+                text.measure(View.MeasureSpec.makeMeasureSpec(Math.max(0, width - 2 * pad), View.MeasureSpec.AT_MOST),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                textHeight = text.getMeasuredHeight();
+            }
+            float availableWidth = Math.max(1, width - 2 * pad);
+            float availableHeight = Math.max(1, height - 2 * pad - textHeight);
+            float scale = Math.min(availableWidth / art.getWidth(), availableHeight / art.getHeight());
+            imageWidth = Math.round(art.getWidth() * scale);
+            imageHeight = Math.round(art.getHeight() * scale);
+        } else {
+            imageWidth = imageHeight = Math.round(height * (small ? 0.9f : 0.55f));
+        }
         LinearLayout.LayoutParams imageParams = (LinearLayout.LayoutParams) image.getLayoutParams();
-        if (imageParams.width != size) {
-            imageParams.width = size;
-            imageParams.height = size;
+        if (imageParams.width != imageWidth || imageParams.height != imageHeight) {
+            imageParams.width = imageWidth;
+            imageParams.height = imageHeight;
             image.setLayoutParams(imageParams);
         }
         if (image.getTag() != art) {
             image.setImageBitmap(art);
             image.setTag(art);
+            cover.setBackground(background(Track.musicApp && art != null ? artColor : 0));
         }
         image.setVisibility(art == null ? View.GONE : View.VISIBLE);
+    }
 
-        String label = DlnaCast.t("Wird auf ", "Playing on ") + session.device.friendlyName
-                + DlnaCast.t(" abgespielt", "");
-        if (!label.contentEquals(text.getText())) text.setText(label);
-        text.setVisibility(small ? View.GONE : View.VISIBLE);
+    /**
+     * Like Spotify's player: the cover's color at the top, fading into dark gray. Black without
+     * a color.
+     */
+    private static android.graphics.drawable.Drawable background(int color) {
+        if (color == 0) return new android.graphics.drawable.ColorDrawable(BLACK);
+        return new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{color, blend(color, GRADIENT_END, 0.55f), GRADIENT_END});
+    }
+
+    private static int blend(int a, int b, float t) {
+        int r = Math.round(((a >> 16) & 0xFF) * (1 - t) + ((b >> 16) & 0xFF) * t);
+        int g = Math.round(((a >> 8) & 0xFF) * (1 - t) + ((b >> 8) & 0xFF) * t);
+        int bl = Math.round((a & 0xFF) * (1 - t) + (b & 0xFF) * t);
+        return 0xFF000000 | (r << 16) | (g << 8) | bl;
+    }
+
+    /**
+     * The cover's dominant color: the most weighted hue among its colorful pixels (by saturation
+     * and brightness), averaged; the plain average for gray covers. Darkened enough for white
+     * text on it.
+     */
+    static int dominantColor(Bitmap bitmap) {
+        Bitmap small = Bitmap.createScaledBitmap(bitmap, 32, 32, true);
+        float[] weight = new float[12];
+        float[][] sum = new float[12][3];
+        long r = 0, g = 0, b = 0;
+        float[] hsv = new float[3];
+        for (int y = 0; y < small.getHeight(); y++) {
+            for (int x = 0; x < small.getWidth(); x++) {
+                int c = small.getPixel(x, y);
+                r += (c >> 16) & 0xFF;
+                g += (c >> 8) & 0xFF;
+                b += c & 0xFF;
+                android.graphics.Color.colorToHSV(c, hsv);
+                if (hsv[1] < 0.25f || hsv[2] < 0.2f) continue;
+                int bucket = Math.min(11, (int) (hsv[0] / 30));
+                float w = hsv[1] * hsv[2];
+                weight[bucket] += w;
+                sum[bucket][0] += ((c >> 16) & 0xFF) * w;
+                sum[bucket][1] += ((c >> 8) & 0xFF) * w;
+                sum[bucket][2] += (c & 0xFF) * w;
+            }
+        }
+        if (small != bitmap) small.recycle();
+        int best = 0;
+        for (int i = 1; i < 12; i++) if (weight[i] > weight[best]) best = i;
+        int count = 32 * 32;
+        int color;
+        // A clear color only if enough of the cover has it.
+        if (weight[best] > count * 0.04f) {
+            color = android.graphics.Color.rgb(Math.round(sum[best][0] / weight[best]),
+                    Math.round(sum[best][1] / weight[best]), Math.round(sum[best][2] / weight[best]));
+        } else {
+            color = android.graphics.Color.rgb((int) (r / count), (int) (g / count), (int) (b / count));
+        }
+        android.graphics.Color.colorToHSV(color, hsv);
+        hsv[2] = Math.max(0.22f, Math.min(hsv[2], 0.55f));
+        return android.graphics.Color.HSVToColor(hsv);
     }
 
     private static void remove(View surface) {
@@ -245,9 +351,11 @@ final class VideoCover {
                 } finally {
                     connection.disconnect();
                 }
+                int color = bitmap == null ? 0 : dominantColor(bitmap);
                 main.post(() -> {
                     if (url.equals(artUrl)) {
                         art = bitmap;
+                        artColor = color;
                         scheduleScan();
                     }
                 });

@@ -15,6 +15,8 @@ final class Track {
     /** Cover image, http(s). */
     String artUrl = "";
     long durationMs;
+    /** URL of the renderer extras (see RendererExtras), empty when the renderer did not ask. */
+    String extrasUrl = "";
 
     /** Casting from YouTube Music: videos are music videos. Set when a session starts. */
     static volatile boolean musicApp;

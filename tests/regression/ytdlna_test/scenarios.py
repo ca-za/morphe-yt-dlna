@@ -9,11 +9,14 @@ Status values:
   skip  - not applicable, or a precondition failed
 """
 
+import json
 import os
 import re
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .control import Control
 from .device import Node, Device, LogStream, Ui
@@ -92,12 +95,21 @@ def launch(ctx: Context) -> Result:
         if started.status != "pass":
             return started
     ctx.control.cmd("setup", device=ctx.renderer_device_url, host=ctx.stream_host, albumArt="true")
-    ctx.ui.dismiss_dialogs()
+    closed = ctx.ui.dismiss_dialogs()
+    if any(c in ("Restart", "Neu starten") for c in closed):
+        # Morphe's restart dialog ends the app; it comes back without the test video.
+        started = _start_app(ctx)
+        if started.status != "pass":
+            return started
+        ctx.control.cmd("setup", device=ctx.renderer_device_url, host=ctx.stream_host, albumArt="true")
+        started.detail = (started.detail + " (restarted by Morphe's dialog)").strip()
     return started
 
 
-def _start_app(ctx: Context) -> Result:
+def _start_app(ctx: Context, retries: int = 3) -> Result:
     ctx.phone.sh(f"am force-stop {ctx.package}")
+    # Granted up front: YouTube sets up its notification channels once it may notify.
+    ctx.phone.sh(f"pm grant {ctx.package} android.permission.POST_NOTIFICATIONS")
     since = ctx.logs.mark()
     ctx.phone.sh(f"am start -a android.intent.action.VIEW -d '{TEST_VIDEO[ctx.app][1]}' -p {ctx.package}")
     dismissed = []
@@ -109,6 +121,14 @@ def _start_app(ctx: Context) -> Result:
         ctx.phone.sh(f"am start -a android.intent.action.VIEW -d '{TEST_VIDEO[ctx.app][1]}' -p {ctx.package}")
     else:
         return Result("fail", "test hooks never got ready (no video loaded?)", {"dismissed": dismissed})
+    # YouTube's background player can post its notification before the app created the channel
+    # for it on a fresh install; Android then ends the app right after the start. Once more.
+    time.sleep(2)
+    if retries > 0 and ctx.logs.find_all(r"CannotPostForegroundServiceNotificationException", since):
+        time.sleep(2)
+        again = _start_app(ctx, retries - 1)
+        again.detail = (again.detail + " (restarted after YouTube's notification crash)").strip()
+        return again
     return Result("pass", "", {"dismissed": dismissed})
 
 
@@ -606,7 +626,13 @@ def song_mode(ctx: Context) -> Result:
 
 def video_mode(ctx: Context) -> Result:
     """YouTube Music's video mode sends video to the TV."""
-    return _switch(ctx, "video_icon", "video")
+    result = _switch(ctx, "video_icon", "video")
+    # The cover over the phone's video, for a look (YTDLNA_COVER_SHOT=<file.png>).
+    shot = os.environ.get("YTDLNA_COVER_SHOT")
+    if shot:
+        time.sleep(4)
+        ctx.phone.screenshot(Path(shot))
+    return result
 
 
 #: A Short opened while casting (any public Short works).
@@ -628,7 +654,7 @@ def shorts_ignored(ctx: Context) -> Result:
     during = {"current": status.get("currentVideoId"), "muted": status.get("muted"), "morphe": status.get("morphe"),
               "renderer": ctx.renderer.state(), "rendererPosition": ctx.renderer.position_ms()}
     loaded_short = ctx.logs.find_all(rf"Loading {SHORT_VIDEO} ", since)
-    seeks = ctx.logs.find_all(r"Local seek to", since)
+    seeks = ctx.logs.find_all(r"Phone seek to .*sent to the renderer", since)
     # Back: once for the Short's panels, until the main player is in front again.
     back = None
     for _ in range(3):
@@ -718,6 +744,72 @@ SPONSOR_VIDEO = os.environ.get("YTDLNA_SPONSOR_VIDEO", "3LopI4YeC4I")
 SPONSOR_SEGMENT = (657_860, 722_177)
 
 
+def renderer_extras(ctx: Context) -> Result:
+    """Extras only for renderers that ask: one that does not gets plain metadata. One that asks
+    (the test renderer may; otherwise forced here) finds a <desc> in the metadata pointing to the
+    extras document, with Morphe's SponsorBlock segments, served with an ETag."""
+    main_video = ctx.control.status().get("currentVideoId")
+    problems = []
+    plain = ctx.renderer.didl()
+    asks = "application/vnd.ytdlna.extras+json" in ctx.renderer.sink_protocols().lower()
+    # Our item ids start with "ytdlna-" anyway: the extras are the <desc> in our namespace.
+    evidence = {"rendererAsks": asks, "hasExtras": "urn:ytdlna-org" in plain}
+    if not asks and "urn:ytdlna-org" in plain:
+        problems.append("extras sent to a renderer that did not ask")
+    if asks and "urn:ytdlna-org" not in plain:
+        problems.append("no extras for a renderer that asks")
+    if not asks:
+        ctx.control.cmd("setup", extras="true")
+    try:
+        since = ctx.logs.mark()
+        ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={SPONSOR_VIDEO}' "
+                     f"-p {ctx.package}")
+        if not ctx.logs.wait(rf"Loading {SPONSOR_VIDEO} ", 30, since):
+            return Result("env", "sponsor video not cast", evidence)
+        # YouTube may briefly go back to the previous video after the link: wait for this one's.
+        href = until(lambda: (re.search(rf'<ytdlna:extras [^>]*href="([^"]*/{SPONSOR_VIDEO}\.json)"',
+                                        ctx.renderer.didl()) or [None, None])[1], 25)
+        evidence["href"] = href
+        if not href:
+            problems.append("no extras in the metadata")
+            return Result("fail", ", ".join(problems), evidence)
+        # The proxy as this computer reaches it.
+        url = re.sub(r"^http://[^/]+", "http://127.0.0.1:8720", href.replace("&amp;", "&"))
+
+        def fetch(etag=None):
+            request = urllib.request.Request(url, headers={"If-None-Match": etag} if etag else {})
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    return response.status, response.headers.get("ETag"), json.loads(response.read())
+            except urllib.error.HTTPError as e:
+                return e.code, e.headers.get("ETag"), None
+        doc = until(lambda: (lambda r: r if r[2] and r[2].get("complete") else None)(fetch()), 25) or fetch()
+        status, etag, body = doc
+        evidence["document"] = body
+        sponsor = [x for x in (body or {}).get("segments", []) if x.get("category") == "sponsor"]
+        if status != 200 or not body:
+            problems.append(f"document not served (HTTP {status})")
+        elif not body.get("complete"):
+            problems.append("document not complete after 25 s")
+        elif not sponsor or abs(sponsor[0].get("start", 0) - SPONSOR_SEGMENT[0] / 1000) > 1:
+            problems.append("sponsor segment missing")
+        if etag:
+            again = fetch(etag)[0]
+            evidence["revalidate"] = again
+            if again != 304:
+                problems.append(f"same ETag answered with {again}, not 304")
+        else:
+            problems.append("no ETag")
+    finally:
+        ctx.control.cmd("setup", extras="false")
+        if main_video:
+            since = ctx.logs.mark()
+            ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={main_video}' "
+                         f"-p {ctx.package}")
+            ctx.logs.wait(rf"Loading {main_video} ", 30, since)
+    return Result("fail" if problems else "pass", ", ".join(problems), evidence)
+
+
 def sponsorblock(ctx: Context) -> Result:
     """Morphe's SponsorBlock skips a sponsor segment on the phone: the skip reaches the TV.
     Diagnostic: the debug lines (segments, TV position at the skip, time the TV spent inside)
@@ -737,19 +829,25 @@ def sponsorblock(ctx: Context) -> Result:
     start, end = SPONSOR_SEGMENT
     ctx.control.local("seek", ms=str(start - 12_000))
     time.sleep(35)
-    lines = ctx.logs.find_all(r"SponsorBlock|Local seek to|Correcting phone", since)
+    lines = ctx.logs.find_all(r"SponsorBlock|Phone seek to|Correcting phone", since)
     tv = ctx.renderer.position_ms()
     evidence.update({"lines": lines[-25:], "rendererAfter": tv})
     skipped = [line for line in lines if "SponsorBlock skip on the phone" in line]
     # The segment runs to the end of the video: the TV stops right after it. Where it was 3 s
     # after the skip shows whether the skip arrived.
-    after = [int(m.group(1)) for m in (re.search(r"SponsorBlock: TV at (\d+) ms 3 s after", line) for line in lines) if m]
+    # Positions the TV reported after the skip (entering, leaving or 3 s after it); 0 once ended.
+    after = []
+    for line in lines:
+        m = re.search(r"SponsorBlock: TV (?:entered|left) \S+ \S+ \S+ \(\S+\) at (\d+) ms|"
+                      r"SponsorBlock: TV at (\d+) ms 3 s after", line)
+        if m:
+            after.append(int(m.group(1) or m.group(2)))
     evidence["tvAfterSkip"] = after
     problems = [p for p, bad in [
         ("no segments loaded", not segments),
         ("no skip on the phone", not skipped),
         ("skip not sent to the TV", skipped and "NOT sent" in skipped[0]),
-        ("TV not past the segment", not after or after[-1] < end - 1000)] if bad]
+        ("TV not past the segment", not any(p >= end - 1000 for p in after))] if bad]
     # Back to the test video for the scenarios after this one.
     if main_video:
         ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={main_video}' "
@@ -1021,7 +1119,7 @@ def crossfade(ctx: Context) -> Result:
             return Result("fail", f"renderer state {ctx.renderer.state()}")
         since = ctx.logs.mark()
         results = {"phone_next": phone_next(ctx), "tv_next": tv_next(ctx)}
-        pauses = ctx.logs.find_all(r"Local pause, mirrored to the renderer", since)
+        pauses = ctx.logs.find_all(r"Phone pause by .*sent to the renderer", since)
         playing = renderer_state_is(ctx, "PLAYING", 10)
         evidence = {name: f"{r.status}: {r.detail}" for name, r in results.items()}
         evidence["pauses"] = pauses[:3]
@@ -1073,6 +1171,7 @@ SCENARIOS = [
     ("song_mode", song_mode, {"music"}),
     ("video_mode", video_mode, {"music"}),
     ("shorts_ignored", shorts_ignored, {"yt"}),
+    ("renderer_extras", renderer_extras, {"yt"}),
     ("sponsorblock", sponsorblock, {"yt"}),
     ("screen_lock", screen_lock, {"yt", "music"}),
     ("stop_cast", stop_cast, {"yt", "music"}),

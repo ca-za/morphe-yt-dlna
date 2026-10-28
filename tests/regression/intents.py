@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Compares the player commands the hooks saw (PlayerIntents) with what the cast sent to the
-renderer from the phone's playback state (the heuristic), per scenario.
+"""Lists the player commands the hooks saw (PlayerIntents) per scenario, with what the cast did
+with them, and checks them against what was sent to the renderer.
 
 Usage:
   tests/regression/intents.py reports/<run>            # all apps of a run
   tests/regression/intents.py reports/<run>/<app>/logcat.txt
 
-For each command the heuristic forwarded (play, pause, seek), a matching hooked command of the
-same kind within a few seconds counts as agreement. The rest:
-  heuristic only  - sent to the TV without a command to the player: a ghost (or a missing hook)
-  intent only     - a command the hooks would forward that the heuristic did not send
-  unknown         - hooked commands the prototype can not place yet (learning material)
+For each command sent to the renderer (play, pause, seek), a forwarded command of the same kind
+within a few seconds counts as agreement. The rest:
+  heuristic only  - sent to the TV without a forwarded command (should not happen any more)
+  intent only     - a forwarded command that was not sent (not the cast title, reloading, live)
+  unknown         - seeks no rule covers yet (learning material)
 """
 import re
 import sys
@@ -23,9 +23,9 @@ LINE = re.compile(r"^(\d\d-\d\d \d\d:\d\d:\d\d\.\d\d\d)\s+\d+\s+\d+\s+\w\s+(\S+)
 INTENT = re.compile(r"Intent (play|pause|seek)(?: (-?\d+) ms)?(?: source=(\S+))?(?: reason=(\d+))? by (\S+)"
                     r"(?: \((\S+) in front\))? (?:director|player)@\S+ -> (.*)$")
 HEURISTIC = [
-    ("seek", re.compile(r"Local seek to (\d+) ms")),
-    ("pause", re.compile(r"Local pause, mirrored to the renderer")),
-    ("play", re.compile(r"Local play, sent to the renderer")),
+    ("seek", re.compile(r"Phone seek to (\d+) ms .*sent to the renderer")),
+    ("pause", re.compile(r"Phone pause by .*sent to the renderer")),
+    ("play", re.compile(r"Phone play by .*sent to the renderer")),
 ]
 
 

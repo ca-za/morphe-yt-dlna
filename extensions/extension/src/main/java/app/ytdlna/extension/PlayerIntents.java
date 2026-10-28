@@ -9,9 +9,9 @@ import java.util.ArrayDeque;
  * came from: the user (player UI, media session), a Morphe patch (SponsorBlock), our own sync,
  * or the player itself (buffering, ads, SABR). Hooked by the patch.
  * <p>
- * Prototype: while casting, every command is logged with what the cast would do with it
- * ("forward" to the renderer or "ignore"). The cast itself still decides from the phone's
- * playback state; the logs show where both agree.
+ * While casting, the user's commands (and SponsorBlock's skips) go to the renderer
+ * ({@link CastSession#onIntent}); everything else the player does on its own stays on the phone,
+ * which follows the renderer. Every command is logged with that decision.
  */
 public final class PlayerIntents {
     /** How long a command we sent through the media session is expected to arrive. */
@@ -67,7 +67,8 @@ public final class PlayerIntents {
 
     private static void record(String kind, Object player, long positionMs, String source, int reason) {
         try {
-            if (CastSession.active() == null) return;
+            CastSession session = CastSession.active();
+            if (session == null) return;
             String caller = caller(kind);
             String side = MorpheState.sidePlayer();
             String decision = decide(kind, source, reason, caller, side);
@@ -89,39 +90,49 @@ public final class PlayerIntents {
                 recent.addLast(entry);
                 while (recent.size() > MAX_RECENT) recent.removeFirst();
             }
+            if (decision.startsWith("forward")) {
+                Runnable send = () -> session.onIntent(kind, positionMs, caller);
+                if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                    send.run();
+                } else {
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(send);
+                }
+            }
         } catch (Throwable t) {
             Log.e("Intent hook failed", t);
         }
     }
 
-    /**
-     * What the cast should do with the command: "forward" it to the renderer, or "ignore" it
-     * (with why). "unknown" marks cases to learn from.
-     */
     /** The reason the app's generic pause() passes. */
     private static final int USER_PAUSE_REASON = 19;
 
+    /**
+     * What the cast does with the command: "forward" it to the renderer, or "ignore" it (with
+     * why). "unknown" (not forwarded) marks seeks no rule covers yet, to learn from in the logs.
+     */
     private static String decide(String kind, String source, int reason, String caller, String side) {
         if (caller.startsWith("ours")) return "ignore (ours)";
         if (side != null) return "ignore (" + side + ")";
+        // Of Morphe's commands, SponsorBlock's skips are the TV's too; others (loop, crossfade's
+        // second player) are the phone's.
+        if (caller.startsWith("morphe")) {
+            return "seek".equals(kind) && caller.contains("SponsorBlock")
+                    ? "forward (" + caller + ")" : "ignore (" + caller + ")";
+        }
         if ("seek".equals(kind)) {
             if (source != null && isInternalSeek(source)) return "ignore (internal seek)";
             if (source != null && !"UNKNOWN".equals(source)) return "forward (user)";
-            // Patches seek without a source, and so does YouTube's media session.
-            if (caller.startsWith("morphe")) return "forward (" + caller + ")";
+            // YouTube's media session seeks without a source.
             if (caller.startsWith("session") || caller.startsWith("ui")) return "forward (user)";
             return "unknown";
         }
         if ("pause".equals(kind)) {
             // The app's generic pause() (player button, media session, voice, ...) gives reason 19;
             // other reasons are the player's own (loading a title, audio focus, ads, timers).
-            if (reason != USER_PAUSE_REASON) return "ignore (pause reason " + reason + ")";
-            if (caller.startsWith("morphe")) return "ignore (" + caller + ")";
-            return "forward (user)";
+            return reason == USER_PAUSE_REASON ? "forward (user)" : "ignore (pause reason " + reason + ")";
         }
         // Play has no reason: the user's come through the media session or a view.
         if (caller.startsWith("session") || caller.startsWith("ui")) return "forward (user)";
-        if (caller.startsWith("morphe")) return "ignore (" + caller + ")";
         return "ignore (app)";
     }
 
