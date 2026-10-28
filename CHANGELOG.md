@@ -1,3 +1,9 @@
+## [1.0.0-alpha.4](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.3...v1.0.0-alpha.4) (2026-10-28)
+
+### ✨ New Features
+
+* mark and remove renderers added by address ([d420206](https://github.com/ca-za/morphe-yt-dlna/commit/d420206e15fc17539050d83800a409d2ef5cc4ae))
+
 ## [1.0.0-alpha.3](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.2...v1.0.0-alpha.3) (2026-10-28)
 
 ### 🐛 Bug Fixes
