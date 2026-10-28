@@ -1,3 +1,9 @@
+## [1.0.0-alpha.5](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.4...v1.0.0-alpha.5) (2026-10-28)
+
+### 🐛 Bug Fixes
+
+* the renderer leads; Shorts and Morphe's own playback stay off the TV ([3652b00](https://github.com/ca-za/morphe-yt-dlna/commit/3652b00c35c146446fb48bb10d7a04f69768d077))
+
 ## [1.0.0-alpha.4](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.3...v1.0.0-alpha.4) (2026-10-28)
 
 ### ✨ New Features
