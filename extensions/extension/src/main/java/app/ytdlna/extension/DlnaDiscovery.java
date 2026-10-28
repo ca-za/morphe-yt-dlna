@@ -48,6 +48,7 @@ final class DlnaDiscovery {
 
         Set<String> seen = new HashSet<>();
         try (DatagramSocket socket = new DatagramSocket()) {
+            bindToLocalNetwork(context, socket);
             String request = "M-SEARCH * HTTP/1.1\r\n"
                     + "HOST: " + SSDP_ADDRESS + ":" + SSDP_PORT + "\r\n"
                     + "MAN: \"ssdp:discover\"\r\n"
@@ -95,6 +96,29 @@ final class DlnaDiscovery {
             Log.e("SSDP search failed", e);
         } finally {
             if (lock != null) lock.release();
+        }
+    }
+
+    /**
+     * Sends the search over Wi-Fi (or Ethernet): with mobile data or a VPN as the default
+     * network, Android may send it there, and no renderer on the local network sees it.
+     */
+    private static void bindToLocalNetwork(Context context, DatagramSocket socket) {
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                    context.getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return;
+            for (android.net.Network network : cm.getAllNetworks()) {
+                android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+                if (caps == null || caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) continue;
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                        || caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                    network.bindSocket(socket);
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            Log.d("Search not bound to Wi-Fi: " + e.getMessage());
         }
     }
 

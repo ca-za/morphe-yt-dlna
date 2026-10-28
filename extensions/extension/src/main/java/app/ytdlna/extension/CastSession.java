@@ -103,6 +103,9 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private float lastSpeed;
     private long lastQueueItemId = -1;
     private volatile long ignorePositionUntil;
+    /** Where the last position correction put the phone, and when; -1 for none. */
+    private volatile long correctedTo = -1;
+    private volatile long correctedAt;
     /** The loaded title is a live stream. */
     private volatile boolean live;
     /** Pauses before this are the player's reaction to our correction seek, not the user's. */
@@ -208,7 +211,12 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         int newState = state.getState();
         long now = SystemClock.elapsedRealtime();
 
-        if (!live && lastState != -1 && now > ignorePositionUntil && loadedVideoId != null
+        // Right after a correction only the corrected position is expected; a jump elsewhere is
+        // the user's seek.
+        boolean afterCorrection = now <= ignorePositionUntil && correctedTo >= 0
+                && newState != PlaybackState.STATE_BUFFERING
+                && Math.abs(state.getPosition() - (correctedTo + (now - correctedAt))) > SEEK_THRESHOLD_MS;
+        if (!live && lastState != -1 && (now > ignorePositionUntil || afterCorrection) && loadedVideoId != null
                 && loadedVideoId.equals(StreamCapture.currentVideoId())) {
             long expected = lastPosition;
             if (lastState == PlaybackState.STATE_PLAYING) {
@@ -307,6 +315,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     public void onVideoLoaded(String videoId) {
         if (local.isPassingThrough(videoId)) return;
         ignorePositionUntil = Math.max(ignorePositionUntil, SystemClock.elapsedRealtime() + LOAD_SETTLE_MS);
+        correctedTo = -1;
         StreamInfo info = StreamCapture.get(videoId);
         // Otherwise loaded once the streams are captured.
         if (info != null) load(info);
@@ -357,6 +366,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                         + "\" by \"" + track.artist + "\" on " + device);
 
                 ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
+                correctedTo = -1;
                 r.expectEcho(RENDERER_LOAD_SETTLE_MS);
                 r.load(new Renderer.Load(info, media, track, art, queue));
                 loadedVideoId = info.videoId;
@@ -542,6 +552,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private void followRenderer(String videoId) {
         if (videoId.equals(StreamCapture.currentVideoId())) return;
         ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
+        correctedTo = -1;
         if (local.skipTo(videoId)) Log.i("Phone follows the renderer to " + videoId);
     }
 
@@ -577,6 +588,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                         long seekAt = SystemClock.elapsedRealtime();
                         ignorePositionUntil = seekAt + LOAD_SETTLE_MS;
                         seekPauseUntil = seekAt + SEEK_PAUSE_MS;
+                        correctedTo = remote;
+                        correctedAt = seekAt;
                         correcting = true;
                         local.seekTo(remote);
                         // Some players pause right after a seek; keep it playing like the renderer.

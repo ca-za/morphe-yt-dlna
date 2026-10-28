@@ -29,6 +29,19 @@ private const val MUSIC_MODE_CLASS = "Lapp/ytdlna/extension/MusicMode;"
 private const val AUDIO_CLASS = "Lapp/ytdlna/extension/CastAudio;"
 private const val TEST_HOOKS_CLASS = "Lapp/ytdlna/extension/TestHooks;"
 private const val AUDIO_TRACK = "Landroid/media/AudioTrack;"
+private const val MEDIA_SESSION = "Landroid/media/session/MediaSession;"
+
+/** `new MediaSession(...)`: the constructor call, with the new session in its first register. */
+private fun mediaSessionInit(instruction: com.android.tools.smali.dexlib2.iface.instruction.Instruction): Int? {
+    if (instruction.opcode != Opcode.INVOKE_DIRECT && instruction.opcode != Opcode.INVOKE_DIRECT_RANGE) return null
+    val reference = (instruction as ReferenceInstruction).reference as? MethodReference ?: return null
+    if (reference.definingClass != MEDIA_SESSION || reference.name != "<init>") return null
+    return when (instruction) {
+        is com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction -> instruction.startRegister
+        is com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction -> instruction.registerC
+        else -> null
+    }
+}
 
 /** AudioTrack methods routed through CastAudio: name + descriptor -> static replacement. */
 private val AUDIO_TRACK_CALLS = mapOf(
@@ -334,6 +347,30 @@ val dlnaCastPatch = bytecodePatch(
                             .take(five.registerCount).joinToString(", ") { "v$it" } + " }"
                     }
                     method.replaceInstruction(index, "invoke-static$registers, $AUDIO_CLASS->$target")
+                }
+            }
+        }
+
+        // The app's media sessions, reported as they are created: the extension follows the
+        // one that plays (its notification, the other way to find it, is not always there).
+        val sessionClasses = mutableListOf<String>()
+        classDefForEach { classDef ->
+            if (classDef.type.startsWith("Lapp/ytdlna/")) return@classDefForEach
+            if (classDef.methods.any { method ->
+                    method.implementation?.instructions?.any { mediaSessionInit(it) != null } == true
+                }) {
+                sessionClasses += classDef.type
+            }
+        }
+        sessionClasses.forEach { type ->
+            mutableClassDefBy(type).methods.forEach { method ->
+                val implementation = method.implementation ?: return@forEach
+                implementation.instructions.toList().withIndex().reversed().forEach { (index, instruction) ->
+                    val session = mediaSessionInit(instruction) ?: return@forEach
+                    method.addInstructions(
+                        index + 1,
+                        "invoke-static/range { v$session .. v$session }, $CAST_CLASS->onMediaSession(Ljava/lang/Object;)V"
+                    )
                 }
             }
         }

@@ -93,6 +93,11 @@ public final class DlnaCast {
     }
 
     /** Injection point: the name of the controller's update method. */
+    /** Injection point: after every {@code new MediaSession(...)} of the app. */
+    public static void onMediaSession(Object session) {
+        LocalPlayer.onMediaSession(session);
+    }
+
     public static void setCastButtonUpdate(String name) {
         castButtonUpdate = name;
     }

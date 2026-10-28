@@ -132,6 +132,22 @@ final class LocalPlayer {
         if (c != null) c.unregisterCallback(callback);
     }
 
+    /** The app's media sessions, as the patch reports them when they are created. */
+    private static final List<java.lang.ref.WeakReference<MediaSession>> sessions =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** Called after every {@code new MediaSession(...)} of the app. */
+    static void onMediaSession(Object session) {
+        if (session instanceof MediaSession) {
+            sessions.add(new java.lang.ref.WeakReference<>((MediaSession) session));
+        }
+    }
+
+    /**
+     * The app's media session: the one of its media notification, which the app's own controls
+     * use. Without that notification (it is not always there), one of the sessions the app
+     * created that has a playback state (and best a queue). Null while none is ready.
+     */
     private MediaSession.Token findSessionToken() {
         try {
             NotificationManager manager = context.getSystemService(NotificationManager.class);
@@ -142,7 +158,27 @@ final class LocalPlayer {
         } catch (Exception e) {
             Log.e("Could not read media notification", e);
         }
-        return null;
+        MediaSession.Token best = null;
+        int bestScore = 0;
+        for (java.lang.ref.WeakReference<MediaSession> ref : sessions) {
+            MediaSession session = ref.get();
+            if (session == null) continue;
+            try {
+                MediaController c = session.getController();
+                PlaybackState state = c.getPlaybackState();
+                List<MediaSession.QueueItem> queue = c.getQueue();
+                int score = (state != null && state.getState() != PlaybackState.STATE_NONE ? 2 : 0)
+                        + (queue != null && !queue.isEmpty() ? 1 : 0);
+                if (score > bestScore) {
+                    best = session.getSessionToken();
+                    bestScore = score;
+                }
+            } catch (Exception e) {
+                Log.d("Media session not readable: " + e.getMessage());
+            }
+        }
+        if (best != null) Log.i("No media notification, using the app's media session directly");
+        return best;
     }
 
     // region State
