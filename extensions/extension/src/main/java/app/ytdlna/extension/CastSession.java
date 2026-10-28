@@ -311,6 +311,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                     && ("PLAYING".equals(rendererState)
                     || now - rendererChangedAt < RENDERER_PAUSE_WINS_MS);
             if (resumeIntent && lastState != -1 && lastState != PlaybackState.STATE_PLAYING && !bufferingEnded) {
+                Log.d("Local play, sent to the renderer");
                 onRenderer("Play", Renderer::resume, "PLAYING");
             } else if (newState == PlaybackState.STATE_PAUSED && !(correcting && now <= seekPauseUntil)) {
                 // Switching titles also reports "paused" for a moment: another queue item or

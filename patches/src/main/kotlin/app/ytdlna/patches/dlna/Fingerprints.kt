@@ -94,3 +94,35 @@ internal object MusicPlaybackModeEnumFingerprint : Fingerprint(
     name = "<clinit>",
     strings = listOf("OMV_PREFERRED_USER_TRIGGERED", "DONT_PLAY_VIDEO_OVERRIDE")
 )
+
+/** Whether a method loads a string starting with [prefix]. */
+internal fun hasString(method: com.android.tools.smali.dexlib2.iface.Method, prefix: String) =
+    method.implementation?.instructions?.any { instruction ->
+        ((instruction as? ReferenceInstruction)?.reference as? StringReference)?.string?.startsWith(prefix) == true
+    } == true
+
+/**
+ * MedialibPlayer.pauseVideo(reason). The player below the app's directors; its methods log their
+ * own names, which makes them easy to find in every version.
+ */
+internal object MedialibPauseFingerprint : Fingerprint(
+    returnType = "V",
+    parameters = listOf("I"),
+    custom = { method, _ -> hasString(method, "MedialibPlayer.pauseVideo(") }
+)
+
+/** MedialibPlayer.playVideo(). */
+internal object MedialibPlayFingerprint : Fingerprint(
+    returnType = "V",
+    parameters = listOf(),
+    custom = { method, _ -> hasString(method, "MedialibPlayer.playVideo()") }
+)
+
+/** MedialibPlayer.seekTo(ms, source). */
+internal object MedialibSeekFingerprint : Fingerprint(
+    returnType = "V",
+    custom = { method, _ ->
+        method.parameterTypes.size == 2 && method.parameterTypes[0].toString() == "J" &&
+            hasString(method, "MedialibPlayer.seekTo(")
+    }
+)

@@ -215,6 +215,8 @@ final class TestHooks {
                         }
                     });
                     String action = intent.getStringExtra("action");
+                    // It acts like a user: its commands are not the cast's.
+                    player.ownCommands = false;
                     player.attach(() -> {
                         switch (action == null ? "" : action) {
                             case "play": player.play(); break;
@@ -278,5 +280,7 @@ final class TestHooks {
         morphe.put("videoId", MorpheState.videoId());
         morphe.put("short", MorpheState.isShort());
         out.put("morphe", morphe);
+        out.put("intents", PlayerIntents.recentJson());
+        out.put("intentHooks", PlayerIntents.hooksSeen());
     }
 }

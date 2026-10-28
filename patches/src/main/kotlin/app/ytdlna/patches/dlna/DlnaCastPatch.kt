@@ -28,6 +28,7 @@ private const val CAST_CLASS = "Lapp/ytdlna/extension/DlnaCast;"
 private const val MUSIC_MODE_CLASS = "Lapp/ytdlna/extension/MusicMode;"
 private const val AUDIO_CLASS = "Lapp/ytdlna/extension/CastAudio;"
 private const val TEST_HOOKS_CLASS = "Lapp/ytdlna/extension/TestHooks;"
+private const val INTENTS_CLASS = "Lapp/ytdlna/extension/PlayerIntents;"
 private const val AUDIO_TRACK = "Landroid/media/AudioTrack;"
 private const val MEDIA_SESSION = "Landroid/media/session/MediaSession;"
 
@@ -260,6 +261,24 @@ private val dlnaManifestPatch = resourcePatch {
     }
 }
 
+/**
+ * Hooks the MedialibPlayer's playVideo(), pauseVideo(reason) and seekTo(ms, source): every play,
+ * pause and seek of the app's player ends there (YouTube and YouTube Music, whichever director
+ * or facade it took). Found by the player's own log messages. Missing ones are skipped:
+ * casting works without them.
+ */
+private fun app.morphe.patcher.patch.BytecodePatchContext.hookPlayerCommands() {
+    MedialibPauseFingerprint.matchOrNull()?.method?.addInstructions(
+        0, "invoke-static/range { p0 .. p1 }, $INTENTS_CLASS->onPause(Ljava/lang/Object;I)V"
+    )
+    MedialibPlayFingerprint.matchOrNull()?.method?.addInstructions(
+        0, "invoke-static/range { p0 .. p0 }, $INTENTS_CLASS->onPlay(Ljava/lang/Object;)V"
+    )
+    MedialibSeekFingerprint.matchOrNull()?.method?.addInstructions(
+        0, "invoke-static/range { p0 .. p3 }, $INTENTS_CLASS->onSeek(Ljava/lang/Object;JLjava/lang/Object;)V"
+    )
+}
+
 @Suppress("unused")
 val dlnaCastPatch = bytecodePatch(
     name = "DLNA cast",
@@ -388,6 +407,10 @@ val dlnaCastPatch = bytecodePatch(
                 }
             }
         }
+
+        // Play, pause and seek commands to the app's player, with their source: what the user
+        // (or a patch) asked for, as opposed to what the player did on its own.
+        hookPlayerCommands()
 
         // YouTube Music: follow the song/video switch, so the renderer gets audio or video.
         MusicPlaybackModeEnumFingerprint.matchOrNull()?.let { enumMatch ->

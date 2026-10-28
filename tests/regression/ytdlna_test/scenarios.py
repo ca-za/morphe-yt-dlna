@@ -652,6 +652,67 @@ def shorts_ignored(ctx: Context) -> Result:
     return Result("fail" if problems else "pass", ", ".join(problems), evidence)
 
 
+def _intents(ctx: Context, kind: str) -> list:
+    return [e for e in ctx.control.status().get("intents", []) if e.get("kind") == kind]
+
+
+def _tap_play_pause(ctx: Context, kind: str) -> bool:
+    """Taps the player's play/pause button. YouTube fades its controls out faster than a UI dump
+    takes: there, a tap on the player shows them and a second tap at its centre hits the button."""
+    before = len(_intents(ctx, kind))
+    if ctx.app == "music":
+        button = next((n for n in ctx.ui.dump() if "play_pause" in n.resource_id and n.enabled), None)
+        if not button:
+            mini = ctx.ui.find(rid="mini_player_view_pager_item") or ctx.ui.find(rid="mini_player")
+            if mini:
+                ctx.ui.tap(mini)
+                time.sleep(2)
+                button = next((n for n in ctx.ui.dump() if "play_pause" in n.resource_id and n.enabled), None)
+        if not button:
+            return False
+        ctx.ui.tap(button)
+    else:
+        nodes = ctx.ui.dump()
+        overlay = next((n for n in nodes if n.resource_id.endswith("player_overlays")), None)
+        if overlay and "Expand" in overlay.desc:
+            ctx.ui.tap(overlay)
+            time.sleep(2)
+            nodes = ctx.ui.dump()
+        player = next((n for n in nodes if n.resource_id.endswith("watch_player")), None)
+        if not player:
+            return False
+        x, y = player.center
+        for _ in range(2):
+            ctx.phone.tap(x, y)
+            time.sleep(0.6)
+            if len(_intents(ctx, kind)) > before:
+                break
+    return until(lambda: len(_intents(ctx, kind)) > before, 4)
+
+
+def ui_controls(ctx: Context) -> Result:
+    """Pause and play with the player's own button: the hooks see them as the user's (by a view)
+    and the TV follows."""
+    if ctx.renderer.state() != "PLAYING":
+        ctx.renderer.play()
+        renderer_state_is(ctx, "PLAYING", 8)
+    evidence = {}
+    problems = []
+    for kind, expected in (("pause", "PAUSED_PLAYBACK"), ("play", "PLAYING")):
+        if not _tap_play_pause(ctx, kind):
+            evidence["intents"] = ctx.control.status().get("intents", [])[-5:]
+            return Result("env", f"could not {kind} with the player button", evidence)
+        followed = renderer_state_is(ctx, expected, 10)
+        last = _intents(ctx, kind)[-1]
+        evidence[kind] = {"tv": ctx.renderer.state(), "intent": last}
+        if not followed:
+            problems.append(f"TV did not follow the {kind}")
+        if not str(last.get("decision", "")).startswith("forward"):
+            problems.append(f"{kind} not seen as the user's: {last.get('caller')} -> {last.get('decision')}")
+        time.sleep(3)
+    return Result("fail" if problems else "pass", ", ".join(problems), evidence)
+
+
 SPONSOR_VIDEO = os.environ.get("YTDLNA_SPONSOR_VIDEO", "3LopI4YeC4I")
 # Its sponsor segment (SponsorBlock database), in ms.
 SPONSOR_SEGMENT = (657_860, 722_177)
@@ -680,11 +741,15 @@ def sponsorblock(ctx: Context) -> Result:
     tv = ctx.renderer.position_ms()
     evidence.update({"lines": lines[-25:], "rendererAfter": tv})
     skipped = [line for line in lines if "SponsorBlock skip on the phone" in line]
+    # The segment runs to the end of the video: the TV stops right after it. Where it was 3 s
+    # after the skip shows whether the skip arrived.
+    after = [int(m.group(1)) for m in (re.search(r"SponsorBlock: TV at (\d+) ms 3 s after", line) for line in lines) if m]
+    evidence["tvAfterSkip"] = after
     problems = [p for p, bad in [
         ("no segments loaded", not segments),
         ("no skip on the phone", not skipped),
         ("skip not sent to the TV", skipped and "NOT sent" in skipped[0]),
-        ("TV not past the segment", tv < end - 1000)] if bad]
+        ("TV not past the segment", not after or after[-1] < end - 1000)] if bad]
     # Back to the test video for the scenarios after this one.
     if main_video:
         ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={main_video}' "
@@ -1001,6 +1066,7 @@ SCENARIOS = [
     ("tv_pause", tv_pause, {"yt", "music"}),
     ("tv_play", tv_play, {"yt", "music"}),
     ("phone_seek", phone_seek, {"yt", "music"}),
+    ("ui_controls", ui_controls, {"yt", "music"}),
     ("volume_keys", volume_keys, {"yt", "music"}),
     ("phone_next", phone_next, {"music"}),
     ("tv_next", tv_next, {"music"}),

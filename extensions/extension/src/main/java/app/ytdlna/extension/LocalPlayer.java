@@ -227,14 +227,30 @@ final class LocalPlayer {
 
     // region Commands
 
+    /**
+     * Commands of this player are the cast's own, not the user's (see {@link PlayerIntents}).
+     * Off for the tests, which act like a user through it.
+     */
+    boolean ownCommands = true;
+
+    private void own(String kind) {
+        if (ownCommands) PlayerIntents.expectOwn(kind);
+    }
+
     void play() {
         MediaController c = controller;
-        if (c != null) c.getTransportControls().play();
+        if (c != null) {
+            own("play");
+            c.getTransportControls().play();
+        }
     }
 
     void pause() {
         MediaController c = controller;
-        if (c != null) c.getTransportControls().pause();
+        if (c != null) {
+            own("pause");
+            c.getTransportControls().pause();
+        }
     }
 
     void next() {
@@ -244,7 +260,10 @@ final class LocalPlayer {
 
     void seekTo(long positionMs) {
         MediaController c = controller;
-        if (c != null) c.getTransportControls().seekTo(positionMs);
+        if (c != null) {
+            own("seek");
+            c.getTransportControls().seekTo(positionMs);
+        }
     }
 
     /** Plays the queue entry of {@code videoId}. False if it is not in the queue. */
@@ -252,6 +271,9 @@ final class LocalPlayer {
         QueueEntry entry = entries.get(videoId);
         MediaController c = controller;
         if (entry == null || c == null) return false;
+        // Loading the item plays it from its start: both are ours.
+        own("play");
+        own("seek");
         c.getTransportControls().skipToQueueItem(entry.queueId);
         return true;
     }
@@ -350,14 +372,24 @@ final class LocalPlayer {
         reloadPosition = position;
         reloadUntil = SystemClock.elapsedRealtime() + RELOAD_MS;
         MediaController.TransportControls controls = c.getTransportControls();
+        own("play");
         controls.skipToQueueItem(neighbour);
-        main.postDelayed(() -> controls.skipToQueueItem(current), 700);
+        main.postDelayed(() -> {
+            own("play");
+            controls.skipToQueueItem(current);
+        }, 700);
         // Seek back once the title is loaded again; retried, since loading takes a moment.
         for (long delay : new long[]{2200, 3500, 5000}) {
             main.postDelayed(() -> {
                 if (!videoId.equals(StreamCapture.currentVideoId())) return;
-                if (Math.abs(position() - position) > SEEK_TOLERANCE_MS) controls.seekTo(position);
-                if (paused) controls.pause();
+                if (Math.abs(position() - position) > SEEK_TOLERANCE_MS) {
+                    own("seek");
+                    controls.seekTo(position);
+                }
+                if (paused) {
+                    own("pause");
+                    controls.pause();
+                }
             }, delay);
         }
         return true;
