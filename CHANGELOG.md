@@ -1,3 +1,9 @@
+## [1.0.0-alpha.8](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.7...v1.0.0-alpha.8) (2026-10-28)
+
+### ✨ New Features
+
+* the user's commands drive the renderer; renderer extras; Music cover ([6cf4230](https://github.com/ca-za/morphe-yt-dlna/commit/6cf4230b5b0ed75f5d612891e00e0405ae010951))
+
 ## [1.0.0-alpha.7](https://github.com/ca-za/morphe-yt-dlna/compare/v1.0.0-alpha.6...v1.0.0-alpha.7) (2026-10-28)
 
 ### ✨ New Features
