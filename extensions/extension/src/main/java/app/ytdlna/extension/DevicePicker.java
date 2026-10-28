@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  * the title with a spinner while searching, the devices and then the actions, each with an icon.
  */
 final class DevicePicker {
-    enum Icon {TV, CAST, ADD, STOP, LINK, DELETE, NONE}
+    enum Icon {TV, CAST, ADD, STOP, LINK, DELETE, SHARE, NONE}
 
     static final class Row {
         final Icon icon;
@@ -223,6 +223,12 @@ final class DevicePicker {
             case DELETE:
                 return "M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1z"
                         + "M18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z";
+            case SHARE:
+                return "M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7"
+                        + "l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3"
+                        + "c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3"
+                        + "c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92"
+                        + "s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z";
             case LINK:
                 return "M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7"
                         + "c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1"

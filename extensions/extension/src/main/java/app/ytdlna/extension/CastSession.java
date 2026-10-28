@@ -131,6 +131,17 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     /** A phone pause longer than this without the renderer pausing was not made by the user. */
     private static final long SELF_PAUSE_MS = PAUSE_DEBOUNCE_MS + 3000;
 
+    // SponsorBlock diagnostics: how Morphe's skips on the phone reach the TV.
+    /** How often the TV position is checked against the segments (debug log switch on). */
+    private static final long SB_WATCH_MS = 1000;
+    /** Morphe's segment array last seen, and its segments. Main thread. */
+    private Object sbRaw;
+    private List<SponsorBlock.Segment> sbSegments = java.util.Collections.emptyList();
+    /** The auto-skip segment the TV is in, since when and from where. Main thread. */
+    private SponsorBlock.Segment tvSegment;
+    private long tvEnteredAt, tvEnteredPosition;
+    private volatile boolean sbWatchQueued;
+
     private CastSession(Context context, DlnaDevice device, String streamHost) {
         this.context = context;
         this.device = device;
@@ -148,6 +159,9 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
 
     private void begin(StreamInfo first) {
         Log.i("Cast session started on " + device);
+        Log.i("SponsorBlock " + (SponsorBlock.available() ? "is in the app" : "is not in the app")
+                + ", debug log " + (DlnaCast.debugLogEnabled(context) ? "on" : "off"));
+        main.postDelayed(this::watchSponsorBlock, SB_WATCH_MS);
         StreamCapture.addListener(this);
         if (musicApp) {
             MusicMode.setListener(this);
@@ -238,12 +252,21 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         }
         int newState = state.getState();
         long now = SystemClock.elapsedRealtime();
+        if (DlnaCast.debugLogEnabled(context)) {
+            // Raw media session state next to the player's own time: shows stale positions.
+            Log.d("Phone session: state " + newState + " at " + state.getPosition() + " ms (updated "
+                    + (now - state.getLastPositionUpdateTime()) + " ms ago, speed " + state.getPlaybackSpeed()
+                    + "), player at " + MorpheState.videoTime() + " ms");
+        }
 
         // Right after a correction only the corrected position is expected; a jump elsewhere is
         // the user's seek.
         boolean afterCorrection = now <= ignorePositionUntil && correctedTo >= 0
                 && newState != PlaybackState.STATE_BUFFERING
                 && Math.abs(state.getPosition() - (correctedTo + (now - correctedAt))) > SEEK_THRESHOLD_MS;
+        SponsorBlock.Segment sbSkip = sponsorSkip(state);
+        if (sbSkip != null) logTvAt("when the phone skipped " + sbSkip, sbSkip);
+        String notSent = null;
         if (!live && lastState != -1 && (now > ignorePositionUntil || afterCorrection) && loadedVideoId != null
                 && loadedVideoId.equals(StreamCapture.currentVideoId())) {
             long expected = lastPosition;
@@ -257,9 +280,24 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             boolean atCorrection = correctedTo >= 0 && Math.abs(position - correctedTo) < CORRECTION_MATCH_MS;
             if (newState != PlaybackState.STATE_BUFFERING && !atCorrection
                     && Math.abs(position - expected) > SEEK_THRESHOLD_MS) {
-                Log.d("Local seek to " + position + " ms");
+                Log.d("Local seek to " + position + " ms (expected " + expected + " ms, player at "
+                        + MorpheState.videoTime() + " ms)");
                 onRenderer("Seek", r -> r.seek(position, local.isPlaying()), "PLAYING", "PAUSED_PLAYBACK");
+            } else {
+                notSent = newState == PlaybackState.STATE_BUFFERING ? "the phone reported it while buffering"
+                        : atCorrection ? "it is at our last correction (" + correctedTo + " ms)"
+                        : "less than " + SEEK_THRESHOLD_MS + " ms from the expected " + expected + " ms";
             }
+        } else {
+            notSent = live ? "live stream" : lastState == -1 ? "no earlier phone state"
+                    : !(now > ignorePositionUntil || afterCorrection) ? "within the settle time after a load or correction"
+                    : "the phone's title " + StreamCapture.currentVideoId() + " is not the cast one " + loadedVideoId;
+        }
+        if (sbSkip != null) {
+            Log.i("SponsorBlock skip on the phone: " + sbSkip + ", phone now at " + state.getPosition() + " ms, "
+                    + (notSent == null ? "sent to the TV" : "NOT sent to the TV: " + notSent));
+            // Where the TV is once the seek had time to land.
+            main.postDelayed(() -> logTvAt("3 s after the phone skipped " + sbSkip, sbSkip), 3000);
         }
         if (newState != lastState) {
             boolean resumeIntent = newState == PlaybackState.STATE_PLAYING
@@ -678,6 +716,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 if (loadedVideoId == null || !loadedVideoId.equals(StreamCapture.currentVideoId())) return;
                 long remote = renderer.position();
                 long phone = local.position();
+                Log.d("Positions: TV " + remote + " ms, phone " + phone + " ms (phone " + (phone - remote) + " ms ahead)");
                 if (remote < 0 || SystemClock.elapsedRealtime() < ignorePositionUntil || local.isReloading()) return;
                 if (Math.abs(remote - phone) > DRIFT_THRESHOLD_MS) {
                     Log.i("Correcting phone position " + phone + " -> " + remote + " ms");
@@ -707,6 +746,115 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 Log.d("Position sync failed: " + e.getMessage());
             }
         });
+    }
+
+    // endregion
+
+    // region SponsorBlock diagnostics
+
+    /** Morphe's segments for the playing video; logs them when they change. Main thread. */
+    private List<SponsorBlock.Segment> sponsorSegments() {
+        Object raw = SponsorBlock.raw();
+        if (raw != sbRaw) {
+            sbRaw = raw;
+            sbSegments = SponsorBlock.segments(raw);
+            StringBuilder list = new StringBuilder();
+            for (SponsorBlock.Segment s : sbSegments) list.append("\n  ").append(s);
+            Log.i("SponsorBlock: " + sbSegments.size() + " segments for " + SponsorBlock.videoId()
+                    + " (cast plays " + loadedVideoId + ")" + list);
+        }
+        return sbSegments;
+    }
+
+    /**
+     * The segment the phone just skipped, if this state is such a jump: from inside (or right
+     * before) a segment to its end. Also catches the user's skip button.
+     */
+    private SponsorBlock.Segment sponsorSkip(PlaybackState state) {
+        if (lastState == -1) return null;
+        List<SponsorBlock.Segment> segments = sponsorSegments();
+        if (segments.isEmpty()) return null;
+        long expected = lastPosition;
+        if (lastState == PlaybackState.STATE_PLAYING) {
+            expected += (long) ((state.getLastPositionUpdateTime() - lastUpdateTime) * lastSpeed);
+        }
+        long position = state.getPosition();
+        if (Math.abs(position - expected) < 1000) return null;
+        for (SponsorBlock.Segment s : segments) {
+            if (Math.abs(position - s.end) <= 1500 && expected >= s.start - 2000 && expected < s.end - 1000) {
+                Log.d("Phone jump " + expected + " -> " + position + " ms matches the end of " + s);
+                return s;
+            }
+        }
+        return null;
+    }
+
+    /** Logs the TV's position next to a segment (queued after commands sent before). */
+    private void logTvAt(String when, SponsorBlock.Segment segment) {
+        if (stopped) return;
+        rendererThread.execute(() -> {
+            try {
+                Renderer r = renderer;
+                if (r == null) return;
+                long tv = r.position();
+                String where = tv < segment.start ? (segment.start - tv) + " ms before it"
+                        : tv < segment.end ? (tv - segment.start) + " ms into it, " + (segment.end - tv) + " ms left"
+                        : (tv - segment.end) + " ms after its end";
+                Log.i("SponsorBlock: TV at " + tv + " ms " + when + ": " + where + ", state " + rendererState);
+            } catch (Exception e) {
+                Log.d("SponsorBlock: TV position failed: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * With the debug log on: checks the TV position every second and logs when it enters and
+     * leaves an auto-skip segment, and how long it played of it.
+     */
+    private void watchSponsorBlock() {
+        if (stopped) return;
+        main.postDelayed(this::watchSponsorBlock, SB_WATCH_MS);
+        List<SponsorBlock.Segment> segments = sponsorSegments();
+        if (!DlnaCast.debugLogEnabled(context) || live || sbWatchQueued || segments.isEmpty()) return;
+        if (!"PLAYING".equals(rendererState) && tvSegment == null) return;
+        boolean anyAuto = false;
+        for (SponsorBlock.Segment s : segments) anyAuto |= s.autoSkip;
+        if (!anyAuto) return;
+        sbWatchQueued = true;
+        rendererThread.execute(() -> {
+            try {
+                Renderer r = renderer;
+                if (r == null) return;
+                long tv = r.position();
+                long phone = local.position();
+                main.post(() -> onTvPosition(segments, tv, phone));
+            } catch (Exception e) {
+                // The next check.
+            } finally {
+                sbWatchQueued = false;
+            }
+        });
+    }
+
+    private void onTvPosition(List<SponsorBlock.Segment> segments, long tv, long phone) {
+        if (stopped || tv < 0) return;
+        SponsorBlock.Segment in = SponsorBlock.autoSkipAt(segments, tv);
+        long now = SystemClock.elapsedRealtime();
+        if (tvSegment != null && in != tvSegment) {
+            SponsorBlock.Segment s = tvSegment;
+            String how = tv < s.start ? "jumped back before it"
+                    : tv >= s.end + 3000 || now - tvEnteredAt < (s.end - tvEnteredPosition) - 3000 ? "by a seek"
+                    : "played through";
+            Log.i("SponsorBlock: TV left " + s + " at " + tv + " ms (" + how + "), " + (now - tvEnteredAt)
+                    + " ms inside, entered at " + tvEnteredPosition + " ms");
+        }
+        if (in != null && in != tvSegment) {
+            tvEnteredAt = now;
+            tvEnteredPosition = tv;
+            Log.i("SponsorBlock: TV entered " + in + " at " + tv + " ms, phone at " + phone + " ms (phone "
+                    + (phone - tv) + " ms ahead)");
+        }
+        tvSegment = in;
     }
 
     // endregion

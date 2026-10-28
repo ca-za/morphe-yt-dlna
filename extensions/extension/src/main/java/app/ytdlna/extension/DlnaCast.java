@@ -158,6 +158,49 @@ public final class DlnaCast {
         }
     }
 
+    private static final String PREF_DEBUG_LOG = "ytdlna_debug_log";
+
+    /** Debug log switch: shows "Share debug log" in the picker and turns on extra checks. */
+    static boolean debugLogEnabled(Context context) {
+        try {
+            return context.getSharedPreferences("morphe_prefs", Context.MODE_PRIVATE)
+                    .getBoolean(PREF_DEBUG_LOG, false);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Shares the kept log lines as text, with a header about the app and the cast. */
+    private static void shareDebugLog(Activity activity) {
+        StringBuilder text = new StringBuilder("YT DLNA debug log\n");
+        try {
+            android.content.pm.PackageInfo info =
+                    activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0);
+            text.append(activity.getPackageName()).append(' ').append(info.versionName).append('\n');
+        } catch (Exception ignored) {
+            text.append(activity.getPackageName()).append('\n');
+        }
+        text.append("Android ").append(Build.VERSION.RELEASE).append(", ").append(Build.MANUFACTURER)
+                .append(' ').append(Build.MODEL).append('\n');
+        CastSession session = CastSession.active();
+        text.append("Cast: ").append(session == null ? "none" : session.device.toString()).append('\n');
+        text.append(MorpheState.summary()).append('\n');
+        text.append("SponsorBlock ").append(SponsorBlock.available() ? "in the app" : "not in the app")
+                .append(", video ").append(SponsorBlock.videoId()).append('\n');
+        for (SponsorBlock.Segment segment : SponsorBlock.segments()) text.append("  ").append(segment).append('\n');
+        text.append('\n').append(Log.text());
+        android.content.Intent send = new android.content.Intent(android.content.Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_SUBJECT, "YT DLNA debug log")
+                .putExtra(android.content.Intent.EXTRA_TEXT, text.toString());
+        try {
+            activity.startActivity(android.content.Intent.createChooser(send, t("Debug-Log teilen", "Share debug log")));
+        } catch (Exception e) {
+            Log.e("Could not share the debug log", e);
+            toast(activity, t("Teilen fehlgeschlagen", "Sharing failed"));
+        }
+    }
+
     /** The click on the app's cast button that the picker took over, passed on to the app. */
     private static void openGoogleCast(View castButton) {
         passThroughClick = true;
@@ -340,6 +383,11 @@ public final class DlnaCast {
                         picker[0].dismiss();
                         showStreamHost(activity, onDone);
                     }));
+            if (debugLogEnabled(activity)) {
+                rows.add(new DevicePicker.Row(DevicePicker.Icon.SHARE,
+                        t("Debug-Log teilen", "Share debug log"), null,
+                        choose.apply(() -> shareDebugLog(activity))));
+            }
             picker[0].setSearching(searching[0]);
             picker[0].setRows(rows);
         };

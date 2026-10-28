@@ -159,6 +159,11 @@ final class TestHooks {
                         result.put("restart", morphe.getBoolean("morphe_music_crossfade_enabled", false) != on);
                         morphe.edit().putBoolean("morphe_music_crossfade_enabled", on).commit();
                     }
+                    if (intent.hasExtra("debugLog")) {
+                        context.getSharedPreferences("morphe_prefs", Context.MODE_PRIVATE).edit()
+                                .putBoolean("ytdlna_debug_log",
+                                        Boolean.parseBoolean(intent.getStringExtra("debugLog"))).commit();
+                    }
                     if (intent.hasExtra("googleCastLink")) {
                         context.getSharedPreferences("morphe_prefs", Context.MODE_PRIVATE).edit()
                                 .putBoolean("ytdlna_google_cast_link",

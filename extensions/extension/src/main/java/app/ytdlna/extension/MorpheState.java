@@ -19,6 +19,8 @@ final class MorpheState {
     private static final Method ytVideoId = method(YT + "patches.VideoInformation", "getVideoId");
     private static final Method ytIsShort = method(YT + "patches.VideoInformation", "lastVideoIdIsShort");
     private static final Method musicVideoId = method(MUSIC + "shared.VideoInformation", "getVideoId");
+    private static final Method ytVideoTime = method(YT + "patches.VideoInformation", "getVideoTime");
+    private static final Method musicVideoTime = method(MUSIC + "shared.VideoInformation", "getVideoTime");
 
     private MorpheState() {
     }
@@ -39,6 +41,12 @@ final class MorpheState {
     static String videoId() {
         Object value = call(ytVideoId != null ? ytVideoId : musicVideoId);
         return value instanceof String && !((String) value).isEmpty() ? (String) value : null;
+    }
+
+    /** The main player's position in ms, straight from the player; -1 if not known. */
+    static long videoTime() {
+        Object value = call(ytVideoTime != null ? ytVideoTime : musicVideoTime);
+        return value instanceof Long ? (Long) value : -1;
     }
 
     /** Whether the last video the main player loaded is a Short. Null if not known. */

@@ -96,17 +96,31 @@ private val GOOGLE_CAST_LINK_SWITCH = """
         android:defaultValue="false" />
 """.trimIndent()
 
+private val DEBUG_LOG_SWITCH = """
+    <SwitchPreference
+        android:key="ytdlna_debug_log"
+        android:title="@string/ytdlna_debug_log_title"
+        android:summary="@string/ytdlna_debug_log_summary"
+        android:defaultValue="false" />
+""".trimIndent()
+
 /** Strings of both apps, by resource folder. */
 private val STRINGS = mapOf(
     "values" to listOf(
         "ytdlna_google_cast_link_title" to "DLNA: Google Cast in the device list",
         "ytdlna_google_cast_link_summary" to "Shows “Google Cast…” in the DLNA device list (also when " +
             "opened from the share menu), leading to the app's own cast dialog.",
+        "ytdlna_debug_log_title" to "DLNA: Debug log",
+        "ytdlna_debug_log_summary" to "Shows “Share debug log” in the DLNA device list and records " +
+            "extra details (such as SponsorBlock skips on the TV). For bug reports.",
     ),
     "values-de" to listOf(
         "ytdlna_google_cast_link_title" to "DLNA: Google Cast in der Geräteauswahl",
         "ytdlna_google_cast_link_summary" to "Zeigt „Google Cast…“ in der DLNA-Geräteauswahl (auch beim " +
             "Öffnen über Teilen); führt zum Cast-Dialog der App.",
+        "ytdlna_debug_log_title" to "DLNA: Debug-Log",
+        "ytdlna_debug_log_summary" to "Zeigt „Debug-Log teilen“ in der DLNA-Geräteauswahl und zeichnet " +
+            "zusätzliche Details auf (etwa SponsorBlock-Sprünge auf dem Fernseher). Für Fehlerberichte.",
     ),
 )
 
@@ -170,9 +184,9 @@ private val dlnaManifestPatch = resourcePatch {
         // without it the switches are absent and their defaults are used.
         run {
             val screen = if (isMusic) {
-                "<screen key=\"$MUSIC_PLAYER_SETTINGS_SCREEN\">\n$ALBUM_ART_SWITCH\n$GOOGLE_CAST_LINK_SWITCH\n</screen>"
+                "<screen key=\"$MUSIC_PLAYER_SETTINGS_SCREEN\">\n$ALBUM_ART_SWITCH\n$GOOGLE_CAST_LINK_SWITCH\n$DEBUG_LOG_SWITCH\n</screen>"
             } else {
-                "<screen key=\"$YOUTUBE_PLAYER_SETTINGS_SCREEN\">\n$GOOGLE_CAST_LINK_SWITCH\n</screen>"
+                "<screen key=\"$YOUTUBE_PLAYER_SETTINGS_SCREEN\">\n$GOOGLE_CAST_LINK_SWITCH\n$DEBUG_LOG_SWITCH\n</screen>"
             }
             val declaration = get(ADD_ON_PREFERENCES_FILE, false)
             if (declaration.exists() && declaration.readText().contains("</morphe-add-on-preferences>")) {

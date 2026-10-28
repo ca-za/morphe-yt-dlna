@@ -652,6 +652,47 @@ def shorts_ignored(ctx: Context) -> Result:
     return Result("fail" if problems else "pass", ", ".join(problems), evidence)
 
 
+SPONSOR_VIDEO = os.environ.get("YTDLNA_SPONSOR_VIDEO", "3LopI4YeC4I")
+# Its sponsor segment (SponsorBlock database), in ms.
+SPONSOR_SEGMENT = (657_860, 722_177)
+
+
+def sponsorblock(ctx: Context) -> Result:
+    """Morphe's SponsorBlock skips a sponsor segment on the phone: the skip reaches the TV.
+    Diagnostic: the debug lines (segments, TV position at the skip, time the TV spent inside)
+    are the evidence."""
+    main_video = ctx.control.status().get("currentVideoId")
+    ctx.control.cmd("setup", debugLog="true")
+    since = ctx.logs.mark()
+    ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={SPONSOR_VIDEO}' "
+                 f"-p {ctx.package}")
+    loaded = ctx.logs.wait(rf"Loading {SPONSOR_VIDEO} ", 30, since)
+    segments = ctx.logs.wait(rf"SponsorBlock: [1-9]\d* segments for {SPONSOR_VIDEO}", 30, since)
+    evidence = {"loaded": bool(loaded), "segments": bool(segments)}
+    if not loaded:
+        return Result("env", "video not cast", evidence)
+    renderer_state_is(ctx, "PLAYING", 20)
+    time.sleep(5)
+    start, end = SPONSOR_SEGMENT
+    ctx.control.local("seek", ms=str(start - 12_000))
+    time.sleep(35)
+    lines = ctx.logs.find_all(r"SponsorBlock|Local seek to|Correcting phone", since)
+    tv = ctx.renderer.position_ms()
+    evidence.update({"lines": lines[-25:], "rendererAfter": tv})
+    skipped = [line for line in lines if "SponsorBlock skip on the phone" in line]
+    problems = [p for p, bad in [
+        ("no segments loaded", not segments),
+        ("no skip on the phone", not skipped),
+        ("skip not sent to the TV", skipped and "NOT sent" in skipped[0]),
+        ("TV not past the segment", tv < end - 1000)] if bad]
+    # Back to the test video for the scenarios after this one.
+    if main_video:
+        ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={main_video}' "
+                     f"-p {ctx.package}")
+        ctx.logs.wait(rf"Loading {main_video} ", 30, ctx.logs.mark())
+    return Result("fail" if problems else "pass", ", ".join(problems), evidence)
+
+
 def screen_lock(ctx: Context) -> Result:
     """Casting goes on with the phone locked."""
     if ctx.renderer.state() != "PLAYING":
@@ -966,6 +1007,7 @@ SCENARIOS = [
     ("song_mode", song_mode, {"music"}),
     ("video_mode", video_mode, {"music"}),
     ("shorts_ignored", shorts_ignored, {"yt"}),
+    ("sponsorblock", sponsorblock, {"yt"}),
     ("screen_lock", screen_lock, {"yt", "music"}),
     ("stop_cast", stop_cast, {"yt", "music"}),
     ("hls_playback", hls_playback, {"yt"}),
