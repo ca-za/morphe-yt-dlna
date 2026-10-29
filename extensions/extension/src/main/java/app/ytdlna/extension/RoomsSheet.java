@@ -91,6 +91,10 @@ final class RoomsSheet {
         sheet.show();
         // A slider being dragged is not rebuilt under the finger.
         boolean[] dragging = {false};
+        // The rooms as last loaded: a tap acts on these, not on what a row showed when drawn.
+        java.util.Map<String, Room> latest = new java.util.concurrent.ConcurrentHashMap<>();
+        // One change at a time: further taps wait until the rooms are read again.
+        boolean[] changing = {false};
         Runnable[] load = new Runnable[1];
         Runnable poll = () -> {
             if (sheet.isShowing()) load[0].run();
@@ -98,7 +102,13 @@ final class RoomsSheet {
         load[0] = () -> background.execute(() -> {
             try {
                 List<Room> rooms = source.load();
+                if (rooms != null) {
+                    latest.clear();
+                    for (Room r : rooms) latest.put(r.id, r);
+                }
                 main.post(() -> {
+                    // A change counts as done once the rooms come back changed.
+                    if (rooms != null) changing[0] = false;
                     if (onChanged != null && rooms != null) onChanged.run();
                     if (!sheet.isShowing()) return;
                     sheet.setSearching(false);
@@ -108,7 +118,7 @@ final class RoomsSheet {
                         String note = source.note();
                         if (note != null) views.add(note(activity, sheet, note, 13));
                         for (Room room : rooms) {
-                            views.add(roomView(activity, sheet, source, room, load[0], dragging));
+                            views.add(roomView(activity, sheet, source, room, load[0], dragging, latest, changing));
                         }
                         if (rooms.isEmpty()) views.add(note(activity, sheet,
                                 DlnaCast.t("Keine Räume gefunden", "No rooms found"), 16));
@@ -122,6 +132,7 @@ final class RoomsSheet {
             } catch (Exception e) {
                 Log.d("Rooms: " + e);
                 main.post(() -> {
+                    changing[0] = false;
                     if (!sheet.isShowing()) return;
                     sheet.setSearching(false);
                     List<View> views = new ArrayList<>();
@@ -136,7 +147,8 @@ final class RoomsSheet {
 
     /** One room: a check (plays along), its name and state, and its volume below. */
     private static View roomView(Activity activity, DevicePicker sheet, Source source, Room r,
-                                 Runnable reload, boolean[] dragging) {
+                                 Runnable reload, boolean[] dragging, java.util.Map<String, Room> latest,
+                                 boolean[] changing) {
         LinearLayout room = new LinearLayout(activity);
         room.setOrientation(LinearLayout.VERTICAL);
         room.setPadding(sheet.dp(24), sheet.dp(8), sheet.dp(24), sheet.dp(4));
@@ -169,9 +181,15 @@ final class RoomsSheet {
             top.setBackground(new RippleDrawable(ColorStateList.valueOf(sheet.dark ? 0x33FFFFFF : 0x1F000000),
                     null, new ColorDrawable(Color.WHITE)));
             top.setOnClickListener(v -> {
+                if (changing[0]) return;
+                Room now = latest.get(r.id);
+                if (now == null || now.fixed) return;
+                changing[0] = true;
+                // At the latest after a few seconds (the device may not report a change).
+                main.postDelayed(() -> changing[0] = false, 5000);
                 v.setEnabled(false);
                 v.setAlpha(0.5f);
-                boolean join = !r.in;
+                boolean join = !now.in;
                 background.execute(() -> {
                     try {
                         source.setIn(r, join);
