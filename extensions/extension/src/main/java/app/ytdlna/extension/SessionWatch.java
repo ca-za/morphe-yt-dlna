@@ -143,6 +143,8 @@ public final class SessionWatch {
             File file = new File(context.getApplicationContext().getFilesDir(), CASTING_FILE);
             if (casting) {
                 file.createNewFile();
+                // A notice about a session (maybe this phone's own) goes once this phone casts.
+                cancel(context.getApplicationContext());
             } else {
                 file.delete();
             }
@@ -293,16 +295,23 @@ public final class SessionWatch {
         try {
             String state;
             String didl;
+            String uri;
             if (device.infoControlUrl != null && device.hasOpenHomePlaylist()) {
                 state = OpenHome.toAvTransportState(OpenHome.transportState(device));
-                didl = tag(DlnaController.soap(device.infoControlUrl, device.infoType, "Track", ""), "Metadata");
+                String track = DlnaController.soap(device.infoControlUrl, device.infoType, "Track", "");
+                didl = tag(track, "Metadata");
+                uri = tag(track, "Uri");
             } else if (device.avTransportControlUrl != null) {
                 state = DlnaController.transportState(device);
-                didl = tag(DlnaController.soap(device.avTransportControlUrl, device.avTransportType, "GetMediaInfo",
-                        "<InstanceID>0</InstanceID>"), "CurrentURIMetaData");
+                String media = DlnaController.soap(device.avTransportControlUrl, device.avTransportType,
+                        "GetMediaInfo", "<InstanceID>0</InstanceID>");
+                didl = tag(media, "CurrentURIMetaData");
+                uri = tag(media, "CurrentURI");
             } else {
                 return null;
             }
+            // This phone's own session (its stream proxy): not someone else's to show.
+            if (fromThisPhone(unescape(uri))) return null;
             didl = unescape(didl);
             boolean ours = didl.contains("id=\"ytdlna-") || didl.contains(RendererExtras.NAMESPACE);
             boolean active = "PLAYING".equals(state) || "PAUSED_PLAYBACK".equals(state) || "TRANSITIONING".equals(state);
@@ -314,6 +323,24 @@ public final class SessionWatch {
             Log.d("Session check of " + device + " failed: " + e.getMessage());
             return null;
         }
+    }
+
+    /** Whether the stream URL points at one of this phone's addresses. */
+    private static boolean fromThisPhone(String uri) {
+        try {
+            String host = new java.net.URL(uri.trim()).getHost();
+            if (host == null || host.isEmpty()) return false;
+            java.net.InetAddress target = java.net.InetAddress.getByName(host);
+            for (java.net.NetworkInterface nif : java.util.Collections.list(
+                    java.net.NetworkInterface.getNetworkInterfaces())) {
+                for (java.net.InetAddress a : java.util.Collections.list(nif.getInetAddresses())) {
+                    if (a.equals(target)) return true;
+                }
+            }
+        } catch (Exception ignored) {
+            // Not a URL or no interfaces: treat as someone else's.
+        }
+        return false;
     }
 
     private static String tag(String xml, String name) {

@@ -1,6 +1,7 @@
 package app.ytdlna.extension;
 
 import android.app.Activity;
+import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Handler;
@@ -73,9 +74,9 @@ final class VideoCover {
     static void update(String newTitle, String newArtUrl) {
         if (newTitle != null) title = newTitle;
         if (newArtUrl != null && !newArtUrl.equals(artUrl)) {
+            // The previous cover and color stay until the new cover is loaded: no black flash
+            // between songs.
             artUrl = newArtUrl;
-            art = null;
-            artColor = 0;
             loadArt(newArtUrl);
         }
         scheduleScan();
@@ -113,31 +114,66 @@ final class VideoCover {
      */
     private static WeakReference<View> pageRef = new WeakReference<>(null);
     private static android.graphics.drawable.Drawable pageOriginal;
-    private static int pageColor;
+    /** The page's gradient while applied; its colors follow {@link #shownColor}. */
+    private static android.graphics.drawable.GradientDrawable pageGradient;
+    /** The color on screen; moves smoothly to {@link #artColor} when the song changes. */
+    private static int shownColor;
+    private static android.animation.ValueAnimator colorAnimation;
+    private static int fadeTarget;
+    private static final long COLOR_FADE_MS = 700;
+
+    /** Fades the page's color to {@code target}; at once if nothing is shown yet. */
+    private static void fadeTo(int target) {
+        if (target == 0 || target == fadeTarget) return;
+        fadeTarget = target;
+        if (colorAnimation != null) colorAnimation.cancel();
+        if (shownColor == target) return;
+        if (shownColor == 0) {
+            show(target);
+            return;
+        }
+        colorAnimation = android.animation.ValueAnimator.ofArgb(shownColor, target);
+        colorAnimation.setDuration(COLOR_FADE_MS);
+        colorAnimation.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+        colorAnimation.addUpdateListener(a -> show((Integer) a.getAnimatedValue()));
+        colorAnimation.start();
+    }
+
+    private static void show(int color) {
+        shownColor = color;
+        if (pageGradient != null) pageGradient.setColors(stops(color));
+        for (FrameLayout cover : covers.values()) cover.invalidate();
+    }
 
     /**
      * Like Spotify: the cover's gradient behind the whole player page (its backmost view, so the
      * controls stay on top), and our cover over the video turns transparent to match.
      */
     private static void updatePage(Activity activity) {
-        boolean want = Track.musicApp && !covers.isEmpty() && art != null && artColor != 0;
+        // Also while the next song's cover loads (the previous color stays): no flash.
+        // In song mode too (no video to cover): Music's black card around a 16:9 thumbnail.
+        boolean want = Track.musicApp && (artColor != 0 || shownColor != 0);
         View page = want ? findPage(activity) : null;
         View applied = pageRef.get();
         if (applied != null && applied != page) restorePage();
         if (page == null) return;
+        fadeTo(artColor);
         if (pageRef.get() == null) {
             pageOriginal = page.getForeground();
             pageRef = new WeakReference<>(page);
-            pageColor = 0;
+            pageGradient = (android.graphics.drawable.GradientDrawable) pageBackground(shownColor);
+            page.setForeground(pageGradient);
         }
-        if (pageColor != artColor) {
-            page.setForeground(pageBackground(artColor));
-            pageColor = artColor;
+        clearBlack(activity);
+        // Song pages swiped in are drawn before the next scan: cleared right before each frame.
+        if (preDrawTree == null) {
+            preDrawTree = page.getViewTreeObserver();
+            preDrawTree.addOnPreDrawListener(preDraw);
         }
         for (FrameLayout cover : covers.values()) {
             android.graphics.drawable.Drawable bg = cover.getBackground();
-            if (!(bg instanceof PageSlice) || ((PageSlice) bg).color != artColor || ((PageSlice) bg).page != page) {
-                cover.setBackground(new PageSlice(page, cover, artColor));
+            if (!(bg instanceof PageSlice) || ((PageSlice) bg).page != page) {
+                cover.setBackground(new PageSlice(page, cover));
             }
         }
     }
@@ -149,20 +185,24 @@ final class VideoCover {
     private static final class PageSlice extends android.graphics.drawable.Drawable {
         final View page;
         final View cover;
-        final int color;
-        private final android.graphics.drawable.Drawable gradient;
+        private final android.graphics.drawable.GradientDrawable gradient;
+        private int color;
         private final int[] pageAt = new int[2];
         private final int[] coverAt = new int[2];
 
-        PageSlice(View page, View cover, int color) {
+        PageSlice(View page, View cover) {
             this.page = page;
             this.cover = cover;
-            this.color = color;
-            this.gradient = pageBackground(color);
+            this.color = shownColor;
+            this.gradient = (android.graphics.drawable.GradientDrawable) pageBackground(shownColor);
         }
 
         @Override
         public void draw(android.graphics.Canvas canvas) {
+            if (color != shownColor) {
+                color = shownColor;
+                gradient.setColors(stops(color));
+            }
             page.getLocationInWindow(pageAt);
             cover.getLocationInWindow(coverAt);
             int dx = pageAt[0] - coverAt[0];
@@ -193,25 +233,131 @@ final class VideoCover {
         return page != null && page.isShown() ? page : null;
     }
 
+    /**
+     * The app's black areas in the player (behind a 16:9 thumbnail in song mode, and the pages
+     * of the next and previous songs while swiping): see-through over our gradient, as long as
+     * it shows. Their own backgrounds come back with {@link #restorePage}.
+     */
+    private static final java.util.WeakHashMap<View, android.graphics.drawable.Drawable> clearedBlack =
+            new java.util.WeakHashMap<>();
+
+    private static ViewTreeObserver preDrawTree;
+    private static final ViewTreeObserver.OnPreDrawListener preDraw = () -> {
+        Activity activity = activityRef.get();
+        if (activity != null && pageRef.get() != null) clearBlack(activity);
+        return true;
+    };
+
+    /** Music's own thumbnail in song mode (over our cover), hidden while our cover shows. */
+    private static final java.util.WeakHashMap<View, Float> hiddenThumbnails = new java.util.WeakHashMap<>();
+    /** When a cover of ours was last there: between songs the video surface is gone briefly. */
+    private static long lastCoverMs;
+
+    private static boolean coverRecently() {
+        return android.os.SystemClock.uptimeMillis() - lastCoverMs < 2000;
+    }
+
+    private static void clearBlack(Activity activity) {
+        if (!covers.isEmpty()) lastCoverMs = android.os.SystemClock.uptimeMillis();
+        if (!coverRecently() && !hiddenThumbnails.isEmpty()) {
+            // No cover of ours: Music's thumbnail shows again.
+            for (java.util.Map.Entry<View, Float> e : hiddenThumbnails.entrySet()) {
+                if (e.getKey() != null) e.getKey().setAlpha(e.getValue());
+            }
+            hiddenThumbnails.clear();
+        }
+        // The player (song mode: its black panel and thumbnail) and the swiped song pages.
+        for (String name : new String[]{"watch_fragment_container", "player_view_pager_container"}) {
+            int id = activity.getResources().getIdentifier(name, "id", activity.getPackageName());
+            View view = id == 0 ? null : activity.findViewById(id);
+            if (view != null) clearBlack(view);
+        }
+    }
+
+    private static void clearBlack(View view) {
+        if (view instanceof SurfaceView || view instanceof TextureView || covers.containsValue(view)) return;
+        android.graphics.drawable.Drawable bg = view.getBackground();
+        // Music's thumbnail (16:9 on black for music videos) over our cover: ours shows the
+        // album cover in both modes. Only while a cover of ours is there.
+        if ("player_thumbnail".equals(safeName(view)) && coverRecently()) {
+            if (!hiddenThumbnails.containsKey(view)) hiddenThumbnails.put(view, view.getAlpha());
+            // Only on a change: setAlpha redraws, and this runs before every frame.
+            if (view.getAlpha() != 0f) view.setAlpha(0f);
+            return;
+        }
+        // The rounded card behind the song's thumbnail: black around a 16:9 one.
+        if (bg != null && "card_view_container".equals(safeName(view))) {
+            if (!clearedBlack.containsKey(view)) clearedBlack.put(view, bg);
+            view.setBackground(null);
+            return;
+        }
+        // Also again when the app sets it anew (recycled song pages).
+        if (isBlack(bg)) {
+            if (!clearedBlack.containsKey(view)) {
+                clearedBlack.put(view, bg);
+            }
+            view.setBackground(null);
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) clearBlack(group.getChildAt(i));
+        }
+    }
+
+    /** A plain opaque black (or nearly) fill. */
+    private static boolean isBlack(android.graphics.drawable.Drawable bg) {
+        int color;
+        if (bg instanceof android.graphics.drawable.ColorDrawable) {
+            color = ((android.graphics.drawable.ColorDrawable) bg).getColor();
+        } else if (bg instanceof android.graphics.drawable.GradientDrawable) {
+            ColorStateList c = ((android.graphics.drawable.GradientDrawable) bg).getColor();
+            if (c == null) return false;
+            color = c.getDefaultColor();
+        } else {
+            return false;
+        }
+        return (color >>> 24) == 0xFF && ((color >> 16) & 0xFF) < 0x20 && ((color >> 8) & 0xFF) < 0x20
+                && (color & 0xFF) < 0x20;
+    }
+
     /** Gives the player page its own background back; covers get theirs again. */
     private static void restorePage() {
+        for (java.util.Map.Entry<View, android.graphics.drawable.Drawable> e : clearedBlack.entrySet()) {
+            if (e.getKey() != null) e.getKey().setBackground(e.getValue());
+        }
+        clearedBlack.clear();
+        for (java.util.Map.Entry<View, Float> e : hiddenThumbnails.entrySet()) {
+            if (e.getKey() != null) e.getKey().setAlpha(e.getValue());
+        }
+        hiddenThumbnails.clear();
+        if (preDrawTree != null) {
+            if (preDrawTree.isAlive()) preDrawTree.removeOnPreDrawListener(preDraw);
+            preDrawTree = null;
+        }
         View page = pageRef.get();
         if (page != null) page.setForeground(pageOriginal);
         pageRef = new WeakReference<>(null);
         pageOriginal = null;
-        pageColor = 0;
+        pageGradient = null;
+        if (colorAnimation != null) colorAnimation.cancel();
+        // A new page (or none): its first color is set at once.
+        shownColor = 0;
+        fadeTarget = 0;
         for (FrameLayout cover : covers.values()) {
             cover.setBackground(background(Track.musicApp && art != null ? artColor : 0));
         }
     }
 
-    /** The cover's color at the top, dark gray from the middle of the page down. */
+    /** The cover's color over the page, darker toward the bottom (like Spotify's player). */
     private static android.graphics.drawable.Drawable pageBackground(int color) {
-        // Like Spotify's player today: the color over the whole page, only a little darker
-        // toward the bottom.
         return new android.graphics.drawable.GradientDrawable(
-                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{color, color, blend(color, BLACK, 0.18f), blend(color, BLACK, 0.32f)});
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, stops(color));
+    }
+
+    /** Full color in the upper part, then darker: about two thirds black at the bottom. */
+    private static int[] stops(int color) {
+        return new int[]{color, color, blend(color, BLACK, 0.3f), blend(color, BLACK, 0.55f),
+                blend(color, BLACK, 0.7f)};
     }
 
     // endregion
@@ -411,9 +557,17 @@ final class VideoCover {
             image.setLayoutParams(imageParams);
         }
         if (image.getTag() != art) {
+            boolean replacing = image.getTag() != null && art != null;
             image.setImageBitmap(art);
             image.setTag(art);
-            cover.setBackground(background(Track.musicApp && art != null ? artColor : 0));
+            // Behind the page's gradient (YouTube Music) the cover keeps its slice of it.
+            if (!(cover.getBackground() instanceof PageSlice)) {
+                cover.setBackground(background(Track.musicApp && art != null ? artColor : 0));
+            }
+            if (replacing) {
+                image.setAlpha(0f);
+                image.animate().alpha(1f).setDuration(250).start();
+            }
         }
         image.setVisibility(art == null ? View.GONE : View.VISIBLE);
     }
@@ -514,6 +668,14 @@ final class VideoCover {
                 });
             } catch (Exception e) {
                 Log.d("Cover image not loaded: " + e.getMessage());
+                // Not the previous song's cover for this one.
+                main.post(() -> {
+                    if (url.equals(artUrl)) {
+                        art = null;
+                        artColor = 0;
+                        scheduleScan();
+                    }
+                });
             }
         }, "YtDlna-cover").start();
     }
