@@ -97,7 +97,7 @@ final class MusicLyrics {
 
     /** Whether Morphe's lyrics feature is in the app. */
     static boolean available() {
-        return Track.musicApp && resolve();
+        return Features.rendererExtras() && Track.musicApp && resolve();
     }
 
     /** Morphe's lyrics for {@code videoId}, or null if it has none for that video (yet). */

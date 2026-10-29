@@ -216,10 +216,17 @@ public final class SessionWatch {
     private static final class Session {
         final String renderer;
         final String title;
+        final String location;
+        final boolean playing;
+        /** Next and previous work (OpenHome playlist). */
+        final boolean playlist;
 
-        Session(String renderer, String title) {
+        Session(String renderer, String title, String location, boolean playing, boolean playlist) {
             this.renderer = renderer;
             this.title = title;
+            this.location = location;
+            this.playing = playing;
+            this.playlist = playlist;
         }
     }
 
@@ -229,6 +236,17 @@ public final class SessionWatch {
         long cpuStart = android.os.Process.getElapsedCpuTime();
         if (castingHere(context)) {
             Log.d("Session search: this phone casts, skipped");
+            cancel(context);
+            return;
+        }
+        if (RemoteControl.running) {
+            // The remote control shows the session and keeps it up to date.
+            Log.d("Session search: remote control runs, skipped");
+            return;
+        }
+        if (RemoteControl.playingHere(context)) {
+            // The phone plays something itself: no remote control in its way.
+            Log.d("Session search: the phone plays, skipped");
             cancel(context);
             return;
         }
@@ -253,6 +271,8 @@ public final class SessionWatch {
                 Log.d("Session check of " + location + " failed: " + e.getMessage());
             }
         }
+        // Sessions whose notice the user swiped away stay hidden (until the title changes).
+        sessions.removeIf(s -> RemoteControl.dismissed(context, s.location, s.title));
         if (sessions.isEmpty()) {
             cancel(context);
         } else {
@@ -271,6 +291,10 @@ public final class SessionWatch {
         } catch (Exception e) {
             return java.util.Collections.emptySet();
         }
+    }
+
+    static boolean castingHereNow(Context context) {
+        return castingHere(context);
     }
 
     /** This phone casts: the app's process runs and wrote the flag. */
@@ -318,7 +342,8 @@ public final class SessionWatch {
             if (!ours || !active) return null;
             Matcher m = TITLE.matcher(didl);
             String title = m.find() ? unescape(m.group(1)).trim() : "";
-            return new Session(device.friendlyName, title);
+            return new Session(device.friendlyName, title, device.location, !"PAUSED_PLAYBACK".equals(state),
+                    device.hasOpenHomePlaylist());
         } catch (Exception e) {
             Log.d("Session check of " + device + " failed: " + e.getMessage());
             return null;
@@ -381,16 +406,32 @@ public final class SessionWatch {
         Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         PendingIntent open = launch == null ? null : PendingIntent.getActivity(context, 0, launch,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification notification = new Notification.Builder(context, CHANNEL_ID)
+        // Buttons for the first session: a tap starts the remote control (a media session).
+        Notification.Builder builder = new Notification.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setContentTitle(title)
                 .setContentText(first.title)
                 .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setContentIntent(open)
+                .setDeleteIntent(RemoteControl.intent(context, RemoteControl.DISMISS, first.location, first.title))
                 .setOnlyAlertOnce(true)
-                .setShowWhen(false)
-                .build();
-        manager.notify(NOTIFICATION_ID, notification);
+                .setShowWhen(false);
+        builder.addAction(button(context,
+                first.playing ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
+                first.playing ? t("Pause", "Pause") : t("Abspielen", "Play"),
+                first.playing ? RemoteControl.PAUSE : RemoteControl.PLAY, first));
+        if (first.playlist) {
+            builder.addAction(button(context, android.R.drawable.ic_media_next, t("Weiter", "Next"),
+                    RemoteControl.NEXT, first));
+        }
+        builder.addAction(button(context, android.R.drawable.ic_menu_manage, t("Steuern", "Control"),
+                RemoteControl.CONTROL, first));
+        manager.notify(NOTIFICATION_ID, builder.build());
+    }
+
+    private static Notification.Action button(Context context, int icon, String title, String command, Session s) {
+        return new Notification.Action.Builder(android.graphics.drawable.Icon.createWithResource(context, icon), title,
+                RemoteControl.intent(context, command, s.location, s.title)).build();
     }
 
     private static void cancel(Context context) {

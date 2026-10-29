@@ -31,7 +31,7 @@ final class RendererExtras {
 
     /** Whether the renderer asked for the extras (explicitly: a wildcard sink does not count). */
     static boolean wanted(DlnaDevice device) {
-        return forceAnnounce || device.lists(MIME);
+        return Features.rendererExtras() && (forceAnnounce || device.lists(MIME));
     }
 
     /** Titles whose real document is published (a placeholder must not replace it). */

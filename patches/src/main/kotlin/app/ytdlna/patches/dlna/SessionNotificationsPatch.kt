@@ -11,6 +11,8 @@ private const val SESSION_WATCH = "Lapp/ytdlna/extension/SessionWatch;"
 private const val JOB_SERVICE = "app.ytdlna.extension.SessionWatch\$Job"
 private const val NETWORK_RECEIVER = "app.ytdlna.extension.SessionWatch\$NetworkReceiver"
 private const val BOOT_RECEIVER = "app.ytdlna.extension.SessionWatch\$BootReceiver"
+private const val REMOTE_SERVICE = "app.ytdlna.extension.RemoteControl\$Remote"
+private const val REMOTE_RECEIVER = "app.ytdlna.extension.RemoteControl\$Receiver"
 
 /** The job's own process: the app's start-up is skipped there. */
 private const val PROCESS = ":ytdlna"
@@ -21,6 +23,9 @@ private val SESSION_PERMISSIONS = listOf(
     "android.permission.POST_NOTIFICATIONS",
     // The search resumes after a reboot without opening the app.
     "android.permission.RECEIVE_BOOT_COMPLETED",
+    // The remote control: a media session in the foreground while it controls a renderer.
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
 )
 
 /** The app's Application class (from the manifest), for the bytecode part. */
@@ -54,6 +59,21 @@ private val sessionManifestPatch = resourcePatch {
                     setAttribute("android:exported", "false")
                 }
             )
+            application.appendChild(
+                doc.createElement("service").apply {
+                    setAttribute("android:name", REMOTE_SERVICE)
+                    setAttribute("android:process", PROCESS)
+                    setAttribute("android:exported", "false")
+                    setAttribute("android:foregroundServiceType", "mediaPlayback")
+                }
+            )
+            application.appendChild(
+                doc.createElement("receiver").apply {
+                    setAttribute("android:name", REMOTE_RECEIVER)
+                    setAttribute("android:process", PROCESS)
+                    setAttribute("android:exported", "false")
+                }
+            )
             // Only the system sends these (protected broadcasts), so exported is safe.
             application.appendChild(
                 doc.createElement("receiver").apply {
@@ -78,7 +98,9 @@ val dlnaSessionNotificationsPatch = bytecodePatch(
     description = "Shows a notification when a DLNA renderer in the Wi-Fi plays a title cast with the " +
         "\"DLNA cast\" patch from any phone (\"Playing on <device>\"). Searches briefly when the phone " +
         "joins an unmetered network and about every 20 minutes on one, in a separate lightweight " +
-        "process; nothing runs in between. Resumes after a reboot without opening the app.",
+        "process; nothing runs in between. Resumes after a reboot without opening the app. Its buttons " +
+        "start a remote control (media session with lock screen controls and the renderer's volume on the " +
+        "volume keys) that steps aside as soon as the phone plays something itself.",
     default = false
 ) {
     compatibleWith(COMPATIBILITY_YOUTUBE_MUSIC)

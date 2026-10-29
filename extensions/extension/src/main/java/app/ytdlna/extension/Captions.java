@@ -168,6 +168,7 @@ public final class Captions {
     }
 
     static boolean enabled(Context context) {
+        if (!Features.rendererExtras()) return false;
         try {
             return context.getSharedPreferences("morphe_prefs", Context.MODE_PRIVATE).getBoolean(PREF_ENABLED, true);
         } catch (Exception e) {

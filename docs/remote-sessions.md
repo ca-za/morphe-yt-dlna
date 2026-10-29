@@ -145,7 +145,30 @@ Deshalb ereignisgesteuert, in einem eigenen leichten Prozess:
 - **Gemessen im Emulator:** ein Lauf etwa 2,5 s (die Suche), 10 bis 40 ms CPU-Zeit für die Suche,
   rund 70 ms CPU-Zeit für den ganzen Prozess inklusive Start. Bei drei Läufen pro Stunde sind
   das wenige Sekunden CPU-Zeit am Tag.
-- **Nicht umgesetzt:** Kachel in den Schnelleinstellungen, Medien-Steuerung in der Benachrichtigung (kommt mit der Fernbedienung).
+- **Nicht umgesetzt:** Kachel in den Schnelleinstellungen.
+
+### Fernsteuerung (Media Session)
+
+Die Benachrichtigung hat Knöpfe: Pause/Abspielen, Weiter (Renderer mit OpenHome-Playlist) und
+„Steuern“. Ein Tipp startet die Fernsteuerung: eine Android Media Session wie bei Spotify Connect,
+mit Titel, Cover, Position, Play/Pause, Spulen, Weiter/Zurück und der Lautstärke des Renderers auf
+den Lautstärketasten, in der Benachrichtigung und auf dem Sperrbildschirm.
+
+- **Warum erst nach einem Tipp:** Android lässt einen Hintergrund-Job keinen Vordergrunddienst
+  starten, wohl aber einen Tipp auf eine Benachrichtigung. Die Media Session braucht den
+  Vordergrunddienst (Typ `mediaPlayback`), sonst beendet Android ihren Prozess und die Knöpfe auf
+  dem Sperrbildschirm wären tot.
+- **Kein Audio-Fokus:** Die Session spielt selbst nichts ab und fordert keinen Audio-Fokus an. Sie
+  pausiert also nichts und wird von nichts pausiert. Spielt das Handy selbst etwas ab (jede App,
+  `AudioManager.isMusicActive`, gemeldet über `AudioPlaybackCallback`), gibt sie sich frei: Player
+  und Benachrichtigung verschwinden, der Renderer spielt weiter. Befehle gehen nur auf einen Tipp
+  des Nutzers an den Renderer.
+- **Akku:** Der Dienst liest den Renderer alle 5 s, solange der Bildschirm an ist, und gar nicht,
+  solange er aus ist (beim Einschalten sofort wieder). Er endet, wenn der Renderer stoppt, der
+  Titel nicht mehr von uns ist, das Handy selbst castet oder abspielt, oder mit „Schließen“.
+- **Wegwischen:** Eine weggewischte Benachrichtigung bleibt für diesen Titel weg.
+- **Fremd oder eigen:** Zeigt die Stream-Adresse auf dieses Handy, ist es kein fremder Cast (keine
+  Benachrichtigung).
 
 ## Mehrere Renderer (wie eine Sonos-Gruppe)
 

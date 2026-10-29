@@ -152,7 +152,7 @@ final class VideoCover {
     private static void updatePage(Activity activity) {
         // Also while the next song's cover loads (the previous color stays): no flash.
         // In song mode too (no video to cover): Music's black card around a 16:9 thumbnail.
-        boolean want = Track.musicApp && (artColor != 0 || shownColor != 0);
+        boolean want = Features.coverPage() && Track.musicApp && (artColor != 0 || shownColor != 0);
         View page = want ? findPage(activity) : null;
         View applied = pageRef.get();
         if (applied != null && applied != page) restorePage();
@@ -432,7 +432,7 @@ final class VideoCover {
      */
     private static void lockPortrait(Activity activity, boolean casting) {
         int portrait = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
-        if (casting && activity != null) {
+        if (casting && activity != null && Features.portraitLock()) {
             if (!lockedFrom.containsKey(activity)) lockedFrom.put(activity, activity.getRequestedOrientation());
             if (activity.getRequestedOrientation() != portrait) activity.setRequestedOrientation(portrait);
             return;
@@ -577,7 +577,7 @@ final class VideoCover {
      * a color.
      */
     private static android.graphics.drawable.Drawable background(int color) {
-        if (color == 0) return new android.graphics.drawable.ColorDrawable(BLACK);
+        if (color == 0 || !Features.coverPage()) return new android.graphics.drawable.ColorDrawable(BLACK);
         return pageBackground(color);
     }
 

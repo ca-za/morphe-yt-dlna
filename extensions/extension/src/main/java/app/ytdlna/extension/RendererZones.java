@@ -68,7 +68,7 @@ final class RendererZones implements RoomsSheet.Source {
     }
 
     static boolean has(DlnaDevice device) {
-        return device.zonesUrl != null;
+        return Features.rooms() && device.zonesUrl != null;
     }
 
     static Snapshot cached(DlnaDevice device) {

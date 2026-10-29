@@ -83,7 +83,7 @@ final class Sonos {
     }
 
     static boolean is(DlnaDevice device) {
-        return device.zoneGroupTopologyUrl != null;
+        return Features.rooms() && device.zoneGroupTopologyUrl != null;
     }
 
     /** "RINCON_…" of a device ("uuid:RINCON_…" in its description). */
