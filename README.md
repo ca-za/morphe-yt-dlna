@@ -56,9 +56,9 @@ In Morphe's settings, under Player:
 - With album covers on, YouTube Music sends title and artist to Deezer / iTunes.
 
 <!-- PATCHES_START EXPANDED -->
-> **[v0.1.5-alpha](https://github.com/ca-za/morphe-yt-dlna/releases/tag/v0.1.5-alpha)**&nbsp;&nbsp;•&nbsp;&nbsp;`dev`&nbsp;&nbsp;•&nbsp;&nbsp;3 patches total
+> **[v0.1.6-alpha](https://github.com/ca-za/morphe-yt-dlna/releases/tag/v0.1.6-alpha)**&nbsp;&nbsp;•&nbsp;&nbsp;`dev`&nbsp;&nbsp;•&nbsp;&nbsp;11 patches total
 <details open>
-<summary>📦 YouTube&nbsp;&nbsp;•&nbsp;&nbsp;1 patch</summary>
+<summary>📦 YouTube&nbsp;&nbsp;•&nbsp;&nbsp;5 patches</summary>
 <br>
 
 **🎯 Supported versions:**
@@ -68,12 +68,16 @@ In Morphe's settings, under Player:
 
 | 💊&nbsp;Patch | 📜&nbsp;Description | ⚙️&nbsp;Options |
 |----------|----------------|-----------|
+| [DLNA Sonos rooms](#dlna-sonos-rooms) | Sonos groups in the device list (one row per group, named after its room), a rooms dialog to add or remove rooms and set their volume, the group's volume on the volume keys, and the same for renderers that feed Sonos rooms themselves. |  |
 | [DLNA cast](#dlna-cast) | Adds DLNA / UPnP casting to the cast button. Streams the current video or song to a DLNA media renderer on the local network. Requires the official Morphe patches (with GmsCore support). The cast button shows when a DLNA renderer is found; turn off Morphe's "Hide cast button" (on by default) to see it. Casting from the share menu works either way. | • Test hooks |
+| [DLNA player controls](#dlna-player-controls) | While casting, YouTube keeps the player controls on screen (no hide timer), so the renderer can be controlled at a glance. A tap still hides and shows them. |  |
+| [DLNA portrait lock](#dlna-portrait-lock) | Keeps the phone upright while casting (the video plays on the TV). |  |
+| [DLNA renderer extras](#dlna-renderer-extras) | Captions, lyrics (YouTube Music) and SponsorBlock segments for renderers that ask for them (see the renderer guide). Plain renderers get the same as without it. |  |
 
 </details>
 
 <details open>
-<summary>📦 YouTube Music&nbsp;&nbsp;•&nbsp;&nbsp;2 patches</summary>
+<summary>📦 YouTube Music&nbsp;&nbsp;•&nbsp;&nbsp;6 patches</summary>
 <br>
 
 **🎯 Supported versions:**
@@ -83,8 +87,12 @@ In Morphe's settings, under Player:
 
 | 💊&nbsp;Patch | 📜&nbsp;Description | ⚙️&nbsp;Options |
 |----------|----------------|-----------|
+| [DLNA Sonos rooms](#dlna-sonos-rooms) | Sonos groups in the device list (one row per group, named after its room), a rooms dialog to add or remove rooms and set their volume, the group's volume on the volume keys, and the same for renderers that feed Sonos rooms themselves. |  |
 | [DLNA cast](#dlna-cast) | Adds DLNA / UPnP casting to the cast button. Streams the current video or song to a DLNA media renderer on the local network. Requires the official Morphe patches (with GmsCore support). The cast button shows when a DLNA renderer is found; turn off Morphe's "Hide cast button" (on by default) to see it. Casting from the share menu works either way. | • Test hooks |
-| [DLNA session notifications](#dlna-session-notifications) | Shows a notification when a DLNA renderer in the Wi-Fi plays a title cast with the "DLNA cast" patch from any phone ("Playing on <device>"). Searches briefly when the phone joins an unmetered network and about every 20 minutes on one, in a separate lightweight process; nothing runs in between. Resumes after a reboot without opening the app. |  |
+| [DLNA cover page](#dlna-cover-page) | While casting, YouTube Music's player shows the album cover on its colors over the whole page (darker toward the bottom, fading to the next song's), like Spotify. |  |
+| [DLNA portrait lock](#dlna-portrait-lock) | Keeps the phone upright while casting (the video plays on the TV). |  |
+| [DLNA renderer extras](#dlna-renderer-extras) | Captions, lyrics (YouTube Music) and SponsorBlock segments for renderers that ask for them (see the renderer guide). Plain renderers get the same as without it. |  |
+| [DLNA session notifications](#dlna-session-notifications) | Shows a notification when a DLNA renderer in the Wi-Fi plays a title cast with the "DLNA cast" patch from any phone ("Playing on <device>"). Searches briefly when the phone joins an unmetered network and about every 20 minutes on one, in a separate lightweight process; nothing runs in between. Resumes after a reboot without opening the app. Its buttons start a remote control (media session with lock screen controls and the renderer's volume on the volume keys) that steps aside as soon as the phone plays something itself. |  |
 
 </details>
 

@@ -1,3 +1,17 @@
+## [0.1.6-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.5-alpha...v0.1.6-alpha) (2026-10-29)
+
+### ✨ New Features
+
+* remote control of DLNA sessions; optional parts as patches of their own ([7a2d0ab](https://github.com/ca-za/morphe-yt-dlna/commit/7a2d0abfdf9db0dbe8b851e71e14aad16d78edf1))
+* renderer rooms as built: mute, fault messages, volume fallback ([0b58d8c](https://github.com/ca-za/morphe-yt-dlna/commit/0b58d8c26e3e324a9a023da7310c3e4bbbec42df))
+* rooms of a renderer that feeds Sonos itself (Zones service, draft) ([b13ce50](https://github.com/ca-za/morphe-yt-dlna/commit/b13ce502a117ec6fc626dba0df9d0a488aa3d56f))
+* YouTube keeps the player controls on screen while casting ([d3c680a](https://github.com/ca-za/morphe-yt-dlna/commit/d3c680a787bbc0207dc8a10b8ad2c637817a4f71))
+
+### 🐛 Bug Fixes
+
+* rooms dialog acts on the current room state, one change at a time ([1d20d23](https://github.com/ca-za/morphe-yt-dlna/commit/1d20d239dbc4d27754ddcf78350b1c0278adf165))
+* Music cover page: darker bottom, color fade between songs, no black flashes ([f44e595](https://github.com/ca-za/morphe-yt-dlna/commit/f44e595ec3a83e5427134954e60d41e7ebc83d19))
+
 ## [0.1.5-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.4-alpha...v0.1.5-alpha) (2026-10-29)
 
 ### 🐛 Bug Fixes
