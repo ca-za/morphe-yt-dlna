@@ -4,8 +4,8 @@ Status: Entwurf, nicht umgesetzt.
 
 ## Ziel
 
-Jedes Handy mit der gepatchten YouTube- oder YouTube-Music-App im selben WLAN erkennt, dass
-irgendwo gerade gecastet wird, und kann:
+Jedes Handy mit der gepatchten YouTube-Music-App im selben WLAN erkennt, dass irgendwo gerade
+gecastet wird, und kann:
 
 - **Fernsteuern:** Play/Pause, Spulen, nächster Titel, Lautstärke, auch aus der Benachrichtigung.
 - **Mitmachen:** die Warteschlange sehen und bearbeiten (Titel anhängen, als Nächstes spielen,
@@ -111,13 +111,7 @@ Mechanismus „Renderer will einen Titel, Handy lädt ihn“ deckt B weitgehend 
 
 ### Rechte
 
-Im WLAN ist nicht jeder vertrauenswürdig (Gäste-WLAN, Mitbewohner). Deshalb Stufen, einstellbar
-am Host:
-
-1. **Jeder im WLAN darf fernsteuern**, Warteschlange nur ansehen (Standard).
-2. **Mitmachen nach Bestätigung:** Der Host bekommt „Lisas Pixel möchte mitmachen“ mit Erlauben
-   oder Ablehnen; danach gibt es ein Token für die Session.
-3. **Mitmachen ohne Nachfrage** (Party-Modus).
+Jeder im WLAN darf fernsteuern und die Warteschlange bearbeiten (siehe „Entscheidungen“).
 
 ## Erkennung im Hintergrund, mit wenig Akku
 
@@ -191,9 +185,11 @@ Die Session führt die Renderer mit ihrer Rolle. Lautstärke gibt es je Renderer
 Stufe 1 bringt mit wenig Aufwand schon das wichtigste Erlebnis, „jemand castet, ich kann
 mitsteuern“, und baut direkt auf dem auf, was es schon gibt.
 
-## Offene Entscheidungen
+## Entscheidungen
 
-- **Rechte-Standard:** Darf jeder im WLAN fernsteuern, oder nur nach Bestätigung?
-- **YouTube und Music gemischt:** Darf ein YouTube-Handy eine Music-Session fernsteuern und Titel
-  anhängen? Technisch ja; die Musik-Logik (Song- und Video-Modus) gilt dann nur für Music-Titel.
-- **Hintergrund-Job:** Erst nach einer Messung des Akkuverbrauchs standardmäßig an?
+- **Rechte:** Jeder im WLAN darf fernsteuern und mitmachen. Abschotten ließe sich das bei DLNA
+  ohnehin kaum: Jede DLNA-Steuer-App kann die Renderer direkt bedienen. Die Bestätigungsstufe
+  entfällt; ein Token bleibt nur, um Teilnehmer zu unterscheiden („hinzugefügt von …“).
+- **Nur YouTube Music:** Sessions gibt es nur in der Music-App. Die YouTube-App bekommt die
+  Funktion nicht und zeigt auch keine Music-Sessions an.
+- **Hintergrund-Job:** offen (siehe „Erkennung im Hintergrund“).
