@@ -428,6 +428,26 @@ val dlnaCastPatch = bytecodePatch(
         // (or a patch) asked for, as opposed to what the player did on its own.
         hookPlayerCommands()
 
+        // YouTube: the player controls stay on screen while casting (no hide timer), so the
+        // renderer can be controlled at a glance. Not in YouTube Music (other player).
+        if (classDefByOrNull("Lcom/google/android/apps/youtube/music/activities/MusicActivity;") == null) {
+            PlayerControlsHideTimerFingerprint.matchOrNull()?.method?.let { method ->
+                if (method.implementation!!.registerCount - 1 >= 1) {
+                    method.addInstructionsWithLabels(
+                        0,
+                        """
+                            invoke-static { }, $CAST_CLASS->keepPlayerControls()Z
+                            move-result v0
+                            if-eqz v0, :hide_timer
+                            return-void
+                            :hide_timer
+                            nop
+                        """
+                    )
+                }
+            }
+        }
+
         // YouTube Music: follow the song/video switch, so the renderer gets audio or video.
         MusicPlaybackModeEnumFingerprint.matchOrNull()?.let { enumMatch ->
             val modeType = enumMatch.classDef.type

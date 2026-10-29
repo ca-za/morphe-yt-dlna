@@ -183,7 +183,7 @@ def cast_button(ctx: Context) -> Result:
             if ctx.ui.dismiss_dialogs():
                 node = _find_cast_button(ctx) or node
             ctx.ui.tap(node)
-            opened = ctx.ui.wait(6, contains=ctx.renderer.name)
+            opened = ctx.ui.wait(6, text=ctx.renderer.name)
             if opened:
                 break
             node = _find_cast_button(ctx) or node
@@ -223,7 +223,7 @@ def _close_picker(ctx: Context) -> None:
 
 
 def _picker_open(ctx: Context) -> bool:
-    return bool(ctx.ui.find(contains=ctx.renderer.name) or ctx.ui.find(contains="by address")
+    return bool(ctx.ui.find(text=ctx.renderer.name) or ctx.ui.find(contains="by address")
                 or ctx.ui.find(contains="per Adresse"))
 
 
@@ -269,7 +269,7 @@ def _open_picker(ctx: Context):
         # YouTube: through the share menu, where no cast button is involved.
         ctx.phone.sh(f"am start -n {ctx.package}/{SHARE_ACTIVITY} -a android.intent.action.SEND "
                      f"-t text/plain --es android.intent.extra.TEXT 'https://youtu.be/{ctx.video_id}'")
-    return ctx.ui.wait(20, contains=ctx.renderer.name)
+    return ctx.ui.wait(20, text=ctx.renderer.name)
 
 
 def google_cast_link(ctx: Context) -> Result:
@@ -337,7 +337,7 @@ def manual_devices(ctx: Context) -> Result:
             removed = bool(ctx.logs.wait(r"Removed saved device " + re.escape(unreachable), 5, since))
             gone = until(lambda: not ctx.ui.find(contains=("Manual · unreachable", "Manuell · nicht erreichbar"), nodes=ctx.ui.dump()), 10)
             removed = removed and bool(gone)
-            renderer_kept = bool(ctx.ui.find(contains=ctx.renderer.name))
+            renderer_kept = bool(ctx.ui.find(text=ctx.renderer.name))
         _close_picker(ctx)
     finally:
         ctx.control.cmd("setup", device=ctx.renderer_device_url)
@@ -374,7 +374,7 @@ def start_cast(ctx: Context) -> Result:
     else:
         ctx.phone.sh(f"am start -n {ctx.package}/{SHARE_ACTIVITY} -a android.intent.action.SEND "
                      f"-t text/plain --es android.intent.extra.TEXT 'https://youtu.be/{ctx.video_id}'")
-    entry = ctx.ui.wait(20, contains=ctx.renderer.name)
+    entry = ctx.ui.wait(20, text=ctx.renderer.name)
     if not entry:
         opened = ctx.logs.find_all(r"Could not show DLNA picker", since) or ctx.ui.find(contains="Google Cast")
         return Result("fail", f"picker did not list '{ctx.renderer.name}'"
@@ -383,7 +383,7 @@ def start_cast(ctx: Context) -> Result:
     m = ctx.logs.wait(r"Loading (\S+) \(([^)]*)\) \"(.*)\" by \"(.*)\" on", 10, since)
     if not m:
         # A tap while the sheet still slides in is lost: once more if the picker is still open.
-        again = ctx.ui.find(contains=ctx.renderer.name)
+        again = ctx.ui.find(text=ctx.renderer.name)
         if again:
             ctx.ui.tap(again)
         m = ctx.logs.wait(r"Loading (\S+) \(([^)]*)\) \"(.*)\" by \"(.*)\" on", 15, since)

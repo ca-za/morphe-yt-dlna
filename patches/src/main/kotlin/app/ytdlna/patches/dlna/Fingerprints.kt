@@ -126,3 +126,21 @@ internal object MedialibSeekFingerprint : Fingerprint(
             hasString(method, "MedialibPlayer.seekTo(")
     }
 )
+
+/**
+ * YouTube: starts the timer that hides the player controls (YouTube 21.42: ood.I()). It posts
+ * the hide runnable after 2000 ms (or the configured delay) unless one is pending.
+ */
+internal object PlayerControlsHideTimerFingerprint : Fingerprint(
+    returnType = "V",
+    parameters = listOf(),
+    custom = { method, _ ->
+        val instructions = method.implementation?.instructions?.toList().orEmpty()
+        fun calls(name: String) = instructions.any { instruction ->
+            val reference = (instruction as? ReferenceInstruction)?.reference as? MethodReference
+            reference?.definingClass == "Landroid/os/Handler;" && reference.name == name
+        }
+        calls("postDelayed") && calls("hasMessages") &&
+            instructions.any { (it as? com.android.tools.smali.dexlib2.iface.instruction.WideLiteralInstruction)?.wideLiteral == 2000L }
+    }
+)

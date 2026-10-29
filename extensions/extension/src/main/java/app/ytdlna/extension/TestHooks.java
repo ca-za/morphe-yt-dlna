@@ -119,6 +119,24 @@ final class TestHooks {
         android.util.Log.i("YtDlnaTest", "READY");
     }
 
+    private static void logViews(android.view.View v, String indent, int maxY) {
+        int[] at = new int[2];
+        v.getLocationOnScreen(at);
+        if (at[1] > maxY || v.getWidth() == 0) return;
+        String name;
+        try {
+            name = v.getId() == android.view.View.NO_ID ? "" : v.getResources().getResourceEntryName(v.getId());
+        } catch (Exception e) {
+            name = "";
+        }
+        android.util.Log.i("YtDlnaViews", indent + name + " " + v.getClass().getName() + " vis=" + v.getVisibility()
+                + " a=" + v.getAlpha() + " " + at[0] + "," + at[1] + " " + v.getWidth() + "x" + v.getHeight());
+        if (v instanceof android.view.ViewGroup) {
+            android.view.ViewGroup g = (android.view.ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) logViews(g.getChildAt(i), indent + " ", maxY);
+        }
+    }
+
     private static void run(Context context, String id, String cmd, Intent intent) {
         JSONObject result = new JSONObject();
         try {
@@ -232,6 +250,15 @@ final class TestHooks {
                         }
                         player.detach();
                     });
+                    result.put("ok", true);
+                    break;
+                }
+                case "views": {
+                    // The view tree's upper part (the player), for finding views: logcat "YtDlnaViews".
+                    android.app.Activity activity = RendererScanner.currentActivity();
+                    if (activity == null) activity = resumedActivity();
+                    if (activity != null) logViews(activity.getWindow().getDecorView(), "",
+                            Integer.parseInt(String.valueOf(intent.getStringExtra("maxY") == null ? "800" : intent.getStringExtra("maxY"))));
                     result.put("ok", true);
                     break;
                 }

@@ -633,7 +633,15 @@ public final class DlnaCast {
         main.post(() -> Toast.makeText(context.getApplicationContext(), message, Toast.LENGTH_LONG).show());
     }
 
-    static String t(String german, String english) {
+    /**
+     * YouTube's player controls stay shown while casting: the hide timer is skipped. Called by
+     * the patched app.
+     */
+    public static boolean keepPlayerControls() {
+        return !Track.musicApp && CastSession.active() != null;
+    }
+
+        static String t(String german, String english) {
         return Locale.getDefault().getLanguage().equals("de") ? german : english;
     }
 
