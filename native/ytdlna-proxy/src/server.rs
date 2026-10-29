@@ -141,7 +141,20 @@ fn respond<W: Write>(request: &Request, out: &mut W) -> io::Result<bool> {
     }
     let entry = match registry::get(&request.path) {
         Some(entry) => Some(entry),
-        None => wait_for_lazy_entry(&request.path),
+        None => match wait_for_lazy_entry(&request.path) {
+            Lazy::Ready(entry) => Some(entry),
+            Lazy::Later => {
+                // A preload of a title the app has not loaded yet: not now, but it will come.
+                http::write_head(
+                    out,
+                    503,
+                    &[("Retry-After", RETRY_AFTER_SECS.to_string()), ("Content-Length", "0".into())],
+                    request.keep_alive,
+                )?;
+                return Ok(request.keep_alive);
+            }
+            Lazy::Missing => None,
+        },
     };
     let Some(entry) = entry else {
         http::write_head(out, 404, &[("Content-Length", "0".into())], request.keep_alive)?;
@@ -272,24 +285,53 @@ fn hls_playlist(media: &registry::HlsMedia) -> io::Result<std::sync::Arc<Vec<u8>
 /// How long a request for a not yet loaded playlist item waits for its streams.
 const LAZY_WAIT: Duration = Duration::from_secs(20);
 
+/// Seconds a renderer is asked to wait before it asks again for a title it preloads.
+const RETRY_AFTER_SECS: u32 = 10;
+
+enum Lazy {
+    Ready(std::sync::Arc<Entry>),
+    /// The app does not load the title now (the renderer only preloads it).
+    Later,
+    Missing,
+}
+
+/// Titles the app does not load for now: requests for them get "503, retry later".
+fn deferred() -> &'static Mutex<std::collections::HashSet<String>> {
+    static SET: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+/// The app does not load `video_id` now: a request waiting for it is answered "retry later".
+pub fn defer_video(video_id: &str) {
+    deferred().lock().unwrap_or_else(|e| e.into_inner()).insert(video_id.to_string());
+}
+
 /// Playlist items point to `/v/<videoId>/auto` before the app has loaded their streams.
-/// A request for one asks the app to load the video (event "NeedVideo") and waits for it.
-fn wait_for_lazy_entry(path: &str) -> Option<std::sync::Arc<Entry>> {
-    let video_id = path.strip_prefix("/v/")?.strip_suffix("/auto")?;
+/// A request for one asks the app to load the video (event "NeedVideo") and waits for it,
+/// unless the app answers that it does not load it now (a preload): then "retry later".
+fn wait_for_lazy_entry(path: &str) -> Lazy {
+    let Some(video_id) = path.strip_prefix("/v/").and_then(|p| p.strip_suffix("/auto")) else {
+        return Lazy::Missing;
+    };
     if video_id.is_empty() || video_id.contains('/') {
-        return None;
+        return Lazy::Missing;
     }
+    deferred().lock().unwrap_or_else(|e| e.into_inner()).remove(video_id);
     crate::info!("Renderer wants {video_id}, waiting for its streams");
     events::push_local("NeedVideo", video_id);
     let deadline = std::time::Instant::now() + LAZY_WAIT;
     while std::time::Instant::now() < deadline {
         thread::sleep(Duration::from_millis(100));
         if let Some(entry) = registry::get(path) {
-            return Some(entry);
+            return Lazy::Ready(entry);
+        }
+        if deferred().lock().unwrap_or_else(|e| e.into_inner()).remove(video_id) {
+            crate::info!("Renderer preloads {video_id}: retry later");
+            return Lazy::Later;
         }
     }
     crate::info!("Streams of {video_id} did not arrive in time");
-    None
+    Lazy::Missing
 }
 
 fn serve_stream<W: Write>(stream: &Stream, request: &Request, head_only: bool, out: &mut W) -> io::Result<bool> {
@@ -366,4 +408,33 @@ fn passthrough<W: Write>(stream: &Stream, request: &Request, head_only: bool, ou
     out.flush()?;
     io::copy(&mut response.reader, out)?;
     Ok(keep_alive)
+}
+
+#[cfg(test)]
+mod lazy_tests {
+    use super::*;
+
+    #[test]
+    fn a_deferred_preload_is_answered_later_right_away() {
+        let started = std::time::Instant::now();
+        let deferrer = thread::spawn(|| {
+            thread::sleep(Duration::from_millis(300));
+            defer_video("preloadTest1");
+        });
+        let result = wait_for_lazy_entry("/v/preloadTest1/auto");
+        deferrer.join().unwrap();
+        assert!(matches!(result, Lazy::Later));
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn a_stale_deferral_does_not_answer_a_later_request() {
+        defer_video("preloadTest2");
+        // The request clears it when it starts waiting; without a new deferral it waits on.
+        let waiter = thread::spawn(|| wait_for_lazy_entry("/v/preloadTest2/auto"));
+        thread::sleep(Duration::from_millis(500));
+        assert!(!waiter.is_finished());
+        defer_video("preloadTest2");
+        assert!(matches!(waiter.join().unwrap(), Lazy::Later));
+    }
 }

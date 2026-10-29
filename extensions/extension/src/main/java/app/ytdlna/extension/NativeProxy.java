@@ -119,6 +119,9 @@ final class NativeProxy {
 
     static native void nativeRemovePrefix(String prefix);
 
+    /** The app does not load this title now (a preload): its waiting request gets "retry later". */
+    static native void nativeDeferVideo(String videoId);
+
     /** Subscribes to renderer events. Returns the subscription token, or null. */
     static native String nativeSubscribe(String eventUrl, String callbackBase);
 

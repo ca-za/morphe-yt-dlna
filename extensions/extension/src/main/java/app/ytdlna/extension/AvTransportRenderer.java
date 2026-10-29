@@ -90,7 +90,7 @@ final class AvTransportRenderer extends Renderer {
     private void onWantsNext(String videoId) {
         // Before the switch it only preloads; the phone follows once the renderer plays it.
         if (videoId.equals(currentVideoId)) listener.onRendererWantsTitle(videoId);
-        else Log.d("Renderer preloads " + videoId);
+        else preload(videoId);
     }
 
     @Override

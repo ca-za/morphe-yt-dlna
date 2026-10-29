@@ -112,7 +112,7 @@ final class OpenHomeRenderer extends Renderer {
         String current = videoByTrackId.get(currentTrackId);
         if (current != null && !current.equals(videoId)) {
             // Preloading the next track; the phone follows once the renderer switches to it.
-            Log.d("Renderer preloads " + videoId);
+            preload(videoId);
             return;
         }
         listener.onRendererWantsTitle(videoId);

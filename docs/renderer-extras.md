@@ -224,7 +224,7 @@ Für Tests bekommt der Test-Renderer (AirPlay-Emulator) bzw. ein kleiner Mock di
 und die Regressionstests prüfen, dass ein Renderer ohne Ankündigung byte-gleiche Metadaten
 bekommt.
 
-## Umgesetzt (Stand alpha.9)
+## Umgesetzt (Stand v0.1.1-alpha)
 
 - **Extras-Dokument** unter `/extras/<videoId>.json` mit `segments` (Morphes Abschnitte und die
   Einstellung je Kategorie) und `captions`; `chapters` ist noch leer. Der Proxy liefert Texte
@@ -244,6 +244,15 @@ bekommt.
   - Alle Spuren stehen nach und nach im Extras-Dokument (im Hintergrund geladen).
   - Schalter „DLNA: Untertitel“ in den Morphe-Einstellungen (Standard: an). Ob am Handy
     Untertitel eingeschaltet sind, wird noch nicht berücksichtigt.
+- **Lyrics (YouTube Music):** aus Morphes Lyrics-Funktion (nur lesend). Im Dokument unter
+  `lyrics` (Anbieter, `synced`, Zeilen mit Zeiten, bei Bedarf Wörter); getaktete Lyrics zusätzlich
+  als Untertitel-Spur „Lyrics“, die im Video-Modus der Untertitel-Spur vorgeht, wenn sie beim
+  Laden schon da ist. Das Dokument ist erst `complete`, wenn Morphe mit der Suche fertig ist.
+  Die Texte sind die der Anbieter (sie können falsch sein).
+- **Warteschlange in Music:** Wechselt das Handy auf einen Titel, bevor der Renderer ihn spielt,
+  ersetzt ein Eintrag mit Untertiteln den vorab eingefügten. Spielt der Renderer ihn schon, kommen
+  die Untertitel nur über das Dokument.
+- **Anleitung für Renderer-Entwickler:** [renderer-guide.md](renderer-guide.md).
 - **Ankündigung:** nur ausdrücklich gelistete Formate zählen (`*:*` nicht).
 - **Tests:** `renderer_extras` prüft, dass ein Renderer ohne Ankündigung nichts davon bekommt,
   und mit Ankündigung Dokument, Abschnitte, Untertitel-Ressource (gültiges SRT) und ETag.

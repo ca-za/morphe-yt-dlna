@@ -157,6 +157,21 @@ abstract class Renderer {
         return baseUrl + autoPath(videoId);
     }
 
+    /**
+     * The renderer preloads a title it does not play yet: served if the app has its streams
+     * already, else the renderer is told to ask again later (the app loads it once played).
+     */
+    void preload(String videoId) {
+        StreamInfo captured = StreamCapture.get(videoId);
+        if (captured != null) {
+            Log.d("Renderer preloads " + videoId);
+            registerAuto(captured);
+        } else {
+            Log.d("Renderer preloads " + videoId + " before the app has it: retry later");
+            NativeProxy.nativeDeferVideo(videoId);
+        }
+    }
+
     private static String autoPath(String videoId) {
         return "/v/" + videoId + "/auto";
     }

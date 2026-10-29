@@ -58,6 +58,23 @@ public final class Captions {
         return selected.get(videoId);
     }
 
+    /** The lyrics as a caption track (YouTube Music, from Morphe's lyrics feature). */
+    static final Track LYRICS = new Track("", "Lyrics", "lyrics", "", false);
+
+    /** Serves timed lyrics as the video's "Lyrics" caption track. Null if there are no cues. */
+    static Track putLyrics(String videoId, List<Cue> cues) {
+        if (cues.isEmpty()) return null;
+        fetched.put(videoId + "/" + LYRICS.vssId, cues);
+        NativeProxy.nativePutText(path(videoId, LYRICS, "srt"), SRT, srt(cues));
+        NativeProxy.nativePutText(path(videoId, LYRICS, "vtt"), VTT, vtt(cues));
+        return LYRICS;
+    }
+
+    /** The track sent with the title, when it is not the preferred caption track. */
+    static void select(String videoId, Track track) {
+        selected.put(videoId, track);
+    }
+
     /**
      * Prepares the captions of a title the renderer gets: the preferred track right away (its
      * addresses go into the title's metadata), the others in the background for the extras.
@@ -73,12 +90,34 @@ public final class Captions {
         } else {
             pick = null;
         }
+        Track sent = pick;
         worker.execute(() -> {
             boolean more = false;
-            for (Track t : list) if (!isPublished(videoId, t)) more |= publish(videoId, t);
+            for (Track t : extraTracks(list, sent)) if (!isPublished(videoId, t)) more |= publish(videoId, t);
             if (more && onMore != null) onMore.run();
         });
         return pick;
+    }
+
+    /** At most this many tracks of a video are fetched for the extras (some have dozens). */
+    private static final int EXTRA_TRACKS = 4;
+
+    /**
+     * The tracks worth fetching for the extras: the phone's language and English, written ones
+     * before generated ones, a few at most.
+     */
+    private static List<Track> extraTracks(List<Track> list, Track pick) {
+        String language = Locale.getDefault().getLanguage();
+        List<Track> sorted = new ArrayList<>(list);
+        sorted.sort((a, b) -> Integer.compare(rank(a, language, pick), rank(b, language, pick)));
+        return sorted.subList(0, Math.min(EXTRA_TRACKS, sorted.size()));
+    }
+
+    private static int rank(Track t, String language, Track pick) {
+        if (t == pick) return 0;
+        boolean own = t.language.equals(language) || t.language.startsWith(language + "-");
+        boolean english = t.language.equals("en") || t.language.startsWith("en-");
+        return (own ? 1 : english ? 3 : 5) + (t.auto ? 1 : 0);
     }
 
     /** Converted cues by video and vssId; present once fetched. */
@@ -200,12 +239,15 @@ public final class Captions {
     /** The tracks for the extras document (the published ones, with their addresses). */
     static JSONArray extrasJson(String videoId, String baseUrl, Track selected) throws JSONException {
         JSONArray out = new JSONArray();
-        for (Track t : tracks.getOrDefault(videoId, Collections.emptyList())) {
+        List<Track> all = new ArrayList<>(tracks.getOrDefault(videoId, Collections.emptyList()));
+        all.add(LYRICS);
+        for (Track t : all) {
             if (!isPublished(videoId, t)) continue;
             out.put(new JSONObject()
                     .put("language", t.language)
                     .put("label", t.name)
                     .put("auto", t.auto)
+                    .put("lyrics", t == LYRICS)
                     .put("default", t == selected)
                     .put("srt", baseUrl + path(videoId, t, "srt"))
                     .put("vtt", baseUrl + path(videoId, t, "vtt")));

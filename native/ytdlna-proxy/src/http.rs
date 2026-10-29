@@ -145,6 +145,7 @@ pub fn reason(status: u16) -> &'static str {
         405 => "Method Not Allowed",
         412 => "Precondition Failed",
         416 => "Range Not Satisfiable",
+        503 => "Service Unavailable",
         _ => "Bad Gateway",
     }
 }

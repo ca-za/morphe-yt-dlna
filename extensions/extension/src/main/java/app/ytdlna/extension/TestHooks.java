@@ -156,7 +156,9 @@ final class TestHooks {
                         android.content.SharedPreferences morphe =
                                 context.getSharedPreferences("morphe_prefs", Context.MODE_PRIVATE);
                         boolean on = Boolean.parseBoolean(intent.getStringExtra("crossfade"));
-                        result.put("restart", morphe.getBoolean("morphe_music_crossfade_enabled", false) != on);
+                        // Either change needs a restart.
+                        result.put("restart", result.optBoolean("restart")
+                                || morphe.getBoolean("morphe_music_crossfade_enabled", false) != on);
                         morphe.edit().putBoolean("morphe_music_crossfade_enabled", on).commit();
                     }
                     if (intent.hasExtra("extras")) {
@@ -272,6 +274,7 @@ final class TestHooks {
             }
         });
         final JSONObject local = new JSONObject();
+        player.ownCommands = false;
         player.attachNow();
         PlaybackState state = player.state();
         local.put("state", state == null ? -1 : state.getState());

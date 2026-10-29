@@ -33,6 +33,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     /** Larger differences between phone and renderer position are corrected on the phone. */
     private static final long DRIFT_THRESHOLD_MS = 4000;
     private static final long SYNC_INTERVAL_MS = 10_000;
+    /** The phone's position is not corrected this close to the title's end. */
+    private static final long END_MARGIN_MS = 8000;
     /** Without renderer events, polling is the only way to notice changes on the TV. */
     private static final long POLL_INTERVAL_MS = 2000;
     /**
@@ -281,8 +283,19 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 Log.d("Phone seek to " + positionMs + " ms by " + caller + ", sent to the renderer");
                 // Until the renderer got there, its old position must not pull the phone back.
                 ignorePositionUntil = SystemClock.elapsedRealtime() + RENDERER_LOAD_SETTLE_MS;
-                onRenderer("Seek", r -> r.seek(positionMs, !"PAUSED_PLAYBACK".equals(rendererState)),
-                        "PLAYING", "PAUSED_PLAYBACK");
+                boolean forward = skipped != null || caller.contains("SponsorBlock");
+                onRenderer("Seek", r -> {
+                    // A skip forward the TV is already past (it came late, held back while the
+                    // TV loaded) would take it back.
+                    if (forward) {
+                        long tv = r.position();
+                        if (tv >= positionMs - 500) {
+                            Log.d("TV at " + tv + " ms, already past the skip to " + positionMs + " ms: not sent");
+                            return;
+                        }
+                    }
+                    r.seek(positionMs, !"PAUSED_PLAYBACK".equals(rendererState));
+                }, "PLAYING", "PAUSED_PLAYBACK");
                 if (skipped != null) {
                     Log.i("SponsorBlock skip on the phone: " + skipped + ", phone now at " + positionMs
                             + " ms, sent to the TV");
@@ -425,7 +438,9 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                         }, EXTRAS_TIMEOUT_MS);
                     }
                 }
-                Log.i("Loading " + info.videoId + " (" + media.description + ") \"" + track.title
+                String language = info.audioTrackName();
+                Log.i("Loading " + info.videoId + " (" + media.description
+                        + (language.isEmpty() ? "" : ", audio " + language) + ") \"" + track.title
                         + "\" by \"" + track.artist + "\" on " + device);
 
                 ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
@@ -470,6 +485,15 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             // More tracks are ready: the extras list them.
             if (extras && videoId.equals(loadedVideoId)) RendererExtras.publish(videoId, extrasDurationMs, false);
         });
+        // YouTube Music: timed lyrics (Morphe's) before the video's captions, if already found.
+        MusicLyrics.Snapshot lyrics = musicApp ? MusicLyrics.read(videoId) : null;
+        if (lyrics != null && lyrics.hasLines()) {
+            Captions.Track lyricsTrack = Captions.putLyrics(videoId, MusicLyrics.cues(lyrics));
+            if (lyricsTrack != null) {
+                pick = lyricsTrack;
+                Captions.select(videoId, pick);
+            }
+        }
         if (pick == null) return;
         if (srt || samsung) track.captionSrt = baseUrl + Captions.path(videoId, pick, "srt");
         if (vtt && !srt) track.captionVtt = baseUrl + Captions.path(videoId, pick, "vtt");
@@ -718,9 +742,13 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             try {
                 if (loadedVideoId == null || !loadedVideoId.equals(StreamCapture.currentVideoId())) return;
                 long remote = renderer.position();
-                long phone = local.position();
+                long phone = phonePosition();
                 Log.d("Positions: TV " + remote + " ms, phone " + phone + " ms (phone " + (phone - remote) + " ms ahead)");
                 if (remote < 0 || SystemClock.elapsedRealtime() < ignorePositionUntil || local.isReloading()) return;
+                // Near the end the renderer moves on by itself and the phone follows; moved there,
+                // the phone would end its title first and load the next one on the renderer again.
+                long duration = local.duration();
+                if (duration > 0 && remote > duration - END_MARGIN_MS) return;
                 if (Math.abs(remote - phone) > DRIFT_THRESHOLD_MS) {
                     Log.i("Correcting phone position " + phone + " -> " + remote + " ms");
                     main.post(() -> {
@@ -738,6 +766,18 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     }
 
     // endregion
+
+    /**
+     * Where the phone's player really is: Morphe's player time for the cast title. The media
+     * session's position is extrapolated from its last state, and keeps running while the player
+     * hangs (as it can after a seek), which would hide that from the sync.
+     */
+    private long phonePosition() {
+        long time = MorpheState.videoTime();
+        String video = MorpheState.videoId();
+        if (time >= 0 && video != null && video.equals(loadedVideoId)) return time;
+        return local.position();
+    }
 
     // region SponsorBlock diagnostics
 
@@ -758,6 +798,23 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             }
         }
         return sbSegments;
+    }
+
+    /** Morphe's lyrics state last published to the extras, per title. Main thread. */
+    private String lyricsKey;
+
+    /** YouTube Music: new lyrics from Morphe go to the extras (and as a caption track). */
+    private void checkLyrics() {
+        String video = loadedVideoId;
+        if (!musicApp || video == null || !RendererExtras.wanted(device)) return;
+        MusicLyrics.Snapshot s = MusicLyrics.read(video);
+        String key = s == null ? null : video + "/" + s.state + "/" + System.identityHashCode(s.identity);
+        if (key == null || key.equals(lyricsKey)) return;
+        lyricsKey = key;
+        if (s.hasLines()) Captions.putLyrics(video, MusicLyrics.cues(s));
+        Log.d("Lyrics for " + video + ": " + s.state + (s.hasLines() ? ", " + s.lines.size() + " lines from "
+                + s.provider + (s.synced ? ", timed" : ", untimed") : ""));
+        RendererExtras.publish(video, extrasDurationMs, false);
     }
 
     /** The segment SponsorBlock skips when it seeks to this position (its end), or null. */
@@ -794,6 +851,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         if (stopped) return;
         main.postDelayed(this::watchSponsorBlock, SB_WATCH_MS);
         List<SponsorBlock.Segment> segments = sponsorSegments();
+        checkLyrics();
         if (!DlnaCast.debugLogEnabled(context) || live || sbWatchQueued || segments.isEmpty()) return;
         if (!"PLAYING".equals(rendererState) && tvSegment == null) return;
         boolean anyAuto = false;

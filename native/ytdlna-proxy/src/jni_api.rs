@@ -138,6 +138,17 @@ pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeRemovePrefix(
     guarded((), || registry::remove_prefix(&prefix));
 }
 
+/// The app does not load this title now (the renderer only preloads it): "retry later".
+#[no_mangle]
+pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeDeferVideo(
+    mut env: JNIEnv,
+    _class: JClass,
+    video_id: JString,
+) {
+    let video_id = string(&mut env, &video_id);
+    guarded((), || crate::server::defer_video(&video_id));
+}
+
 /// Subscribes to a renderer service. Returns the subscription token, or null on failure.
 #[no_mangle]
 pub extern "system" fn Java_app_ytdlna_extension_NativeProxy_nativeSubscribe(

@@ -171,7 +171,8 @@ final class StreamProxy {
         for (StreamInfo.Format f : info.formats) {
             if (!f.hasUrl() || !f.adaptive || !f.container().endsWith("mp4")) continue;
             if (f.isVideoOnly() && f.codecs().startsWith("avc1") && f.height <= MAX_VIDEO_HEIGHT) tracks.add(f);
-            if (f.isAudioOnly() && f.codecs().startsWith("mp4a") && (audio == null || f.bitrate > audio.bitrate)) audio = f;
+            if (f.isAudioOnly() && f.codecs().startsWith("mp4a") && info.isPreferredAudio(f)
+                    && StreamInfo.betterAudio(f, audio)) audio = f;
         }
         if (tracks.isEmpty() || audio == null) return new ArrayList<>();
         tracks.sort(Comparator.comparingInt((StreamInfo.Format f) -> f.height).reversed());
@@ -290,10 +291,12 @@ final class StreamProxy {
         StreamInfo.Format best = null;
         for (StreamInfo.Format f : info.formats) {
             if (!f.isAudioOnly() || !f.hasUrl() || !f.container().equals(container)) continue;
+            // Of a video with several languages, the track YouTube plays.
+            if (!info.isPreferredAudio(f)) continue;
             // Skip surround (ac-3, ec-3) and keep stereo AAC/Opus.
             String codecs = f.codecs();
             if (!(codecs.startsWith("mp4a") || codecs.startsWith("opus"))) continue;
-            if (best == null || f.bitrate > best.bitrate) best = f;
+            if (StreamInfo.betterAudio(f, best)) best = f;
         }
         return best;
     }

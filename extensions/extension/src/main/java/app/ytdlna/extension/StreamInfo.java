@@ -17,6 +17,12 @@ final class StreamInfo {
         long indexStart = -1, indexEnd = -1;
         long contentLength;
         boolean adaptive;
+        /** Audio track of a video with several (languages): its id ("de.3", "en-US.4"), name. */
+        String audioTrackId = "", audioTrackName = "";
+        /** The track YouTube plays by default (the original, usually). */
+        boolean audioDefault;
+        /** A version with compressed dynamic range ("stable volume"). */
+        boolean drc;
 
         boolean isAudioOnly() {
             return mimeType.startsWith("audio/");
@@ -49,9 +55,18 @@ final class StreamInfo {
             return "itag=" + itag + " " + mimeType + " " + width + "x" + height
                     + " br=" + bitrate + " len=" + contentLength
                     + " init=" + initStart + "-" + initEnd + " index=" + indexStart + "-" + indexEnd
-                    + (hasUrl() ? " url" : " NO-URL");
+                    + (hasUrl() ? " url" : " NO-URL")
+                    + (audioTrackId.isEmpty() ? "" : " track=" + audioTrackId + (audioDefault ? " default" : ""))
+                    + (drc ? " drc" : "");
         }
     }
+
+    // Format: audio track {4 name, 5 id, 6 default} and the DRC flag.
+    static final int F_AUDIO_TRACK = 28;
+    static final int AT_NAME = 4;
+    static final int AT_ID = 5;
+    static final int AT_DEFAULT = 6;
+    private static final int F_DRC = 49;
 
     // StreamingData field numbers.
     private static final int SD_FORMATS = 2;
@@ -159,6 +174,18 @@ final class StreamInfo {
             format.initStart = Proto.varint(r, R_START);
             format.initEnd = Proto.varint(r, R_END);
         }
+        Proto.Field track = Proto.first(fields, F_AUDIO_TRACK);
+        if (track != null && track.wireType == Proto.BYTES) {
+            try {
+                List<Proto.Field> t = Proto.parse(track.data);
+                format.audioTrackName = Proto.string(t, AT_NAME);
+                format.audioTrackId = Proto.string(t, AT_ID);
+                format.audioDefault = Proto.varint(t, AT_DEFAULT) != 0;
+            } catch (IllegalArgumentException ignored) {
+                // Not the message expected: no track information.
+            }
+        }
+        format.drc = Proto.varint(fields, F_DRC) != 0;
         Proto.Field index = Proto.first(fields, F_INDEX_RANGE);
         if (index != null && index.wireType == Proto.BYTES) {
             List<Proto.Field> r = Proto.parse(index.data);
@@ -166,6 +193,48 @@ final class StreamInfo {
             format.indexEnd = Proto.varint(r, R_END);
         }
         return format;
+    }
+
+    private String preferredTrack;
+    private boolean preferredTrackKnown;
+
+    /**
+     * The audio track to play of a video with several: the one YouTube plays by default, else
+     * the one in the phone's language, else any. Null if the video has only one.
+     */
+    synchronized String preferredAudioTrack() {
+        if (preferredTrackKnown) return preferredTrack;
+        preferredTrackKnown = true;
+        String language = java.util.Locale.getDefault().getLanguage();
+        String inLanguage = null;
+        for (Format f : formats) {
+            if (!f.isAudioOnly() || f.audioTrackId.isEmpty()) continue;
+            if (f.audioDefault) return preferredTrack = f.audioTrackId;
+            String code = f.audioTrackId.split("[.-]")[0];
+            if (inLanguage == null && code.equals(language)) inLanguage = f.audioTrackId;
+        }
+        return preferredTrack = inLanguage;
+    }
+
+    /** Whether an audio format belongs to the track to play (always, for a single track). */
+    boolean isPreferredAudio(Format f) {
+        String track = preferredAudioTrack();
+        return track == null || track.equals(f.audioTrackId);
+    }
+
+    /** Whether {@code f} is the better audio choice than {@code best}: full dynamics, then bitrate. */
+    static boolean betterAudio(Format f, Format best) {
+        if (best == null) return true;
+        if (best.drc != f.drc) return best.drc;
+        return f.bitrate > best.bitrate;
+    }
+
+    /** Name of the audio track played, empty for a single track. */
+    String audioTrackName() {
+        String track = preferredAudioTrack();
+        if (track == null) return "";
+        for (Format f : formats) if (track.equals(f.audioTrackId)) return f.audioTrackName;
+        return track;
     }
 
     /** A live stream: it has an HLS playlist and no fixed length. */

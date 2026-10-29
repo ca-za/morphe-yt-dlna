@@ -90,7 +90,10 @@ def launch(ctx: Context) -> Result:
     if started.status != "pass":
         return started
     # Morphe hides the cast button by default; it reads its settings when the app starts.
-    if ctx.control.cmd("setup", showCastButton="true").get("restart"):
+    # Crossfade (Music) off: a run cut short in the crossfade scenario leaves it on, and with it
+    # Music allows no video mode.
+    extras = {"crossfade": "false"} if ctx.app == "music" else {}
+    if ctx.control.cmd("setup", showCastButton="true", **extras).get("restart"):
         started = _start_app(ctx)
         if started.status != "pass":
             return started
@@ -618,9 +621,17 @@ def _switch(ctx: Context, icon: str, expect: str) -> Result:
     if not node.enabled:
         # Titles without a song (or video) version have the switch disabled.
         raise Skip("this title has no song/video switch")
+    shot = os.environ.get("YTDLNA_COVER_SHOT")
+    if shot:
+        ctx.phone.screenshot(Path(shot.replace(".png", f"-before-{expect}.png")))
     since = ctx.logs.mark()
     ctx.ui.tap(node)
     m = ctx.logs.wait(rf"Switching the renderer to {expect}", 12, since)
+    if not m and not ctx.logs.find_all(r"Music mode ", since):
+        # The tap may have been lost: once more.
+        node = ctx.ui.find(rid=icon) or node
+        ctx.ui.tap(node)
+        m = ctx.logs.wait(rf"Switching the renderer to {expect}", 12, since)
     if not m:
         # Titles without a song (or video) version: the app itself stays in its mode.
         mode = "song" if expect == "audio" else "video"
@@ -809,6 +820,78 @@ SPONSOR_VIDEO = os.environ.get("YTDLNA_SPONSOR_VIDEO", "3LopI4YeC4I")
 SPONSOR_SEGMENT = (657_860, 722_177)
 
 
+#: A video with many audio tracks (original English and dubbed languages).
+MULTI_AUDIO_VIDEO = os.environ.get("YTDLNA_MULTI_AUDIO_VIDEO", "0e3GPea1Tyg")
+
+
+def audio_language(ctx: Context) -> Result:
+    """A video with several audio languages plays the track YouTube plays by default (its
+    original) on the TV, not the one with the highest bitrate."""
+    main_video = ctx.control.status().get("currentVideoId")
+    since = ctx.logs.mark()
+    ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={MULTI_AUDIO_VIDEO}' "
+                 f"-p {ctx.package}")
+    try:
+        loaded = ctx.logs.wait(rf"Loading {MULTI_AUDIO_VIDEO} \((.*?)\) \"", 40, since)
+        if not loaded:
+            return Result("env", "video not cast")
+        detail = loaded.group(1)
+        default = ctx.logs.wait(rf"itag=\d+ audio/\S+.* track=(\S+) default", 5, since)
+        evidence = {"load": detail, "defaultTrack": default.group(1) if default else None}
+        ok = "audio " in detail and "original" in detail.lower()
+        return Result("pass" if ok else "fail", detail if ok else f"audio track not the original: {detail}", evidence)
+    finally:
+        if main_video:
+            since = ctx.logs.mark()
+            ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={main_video}' "
+                         f"-p {ctx.package}")
+            ctx.logs.wait(rf"Loading {main_video} ", 30, since)
+
+
+def music_lyrics(ctx: Context) -> Result:
+    """YouTube Music: Morphe's lyrics for the song reach the extras document (for renderers
+    that ask for extras)."""
+    asks = "application/vnd.ytdlna.extras+json" in ctx.renderer.sink_protocols().lower()
+    if not asks:
+        ctx.control.cmd("setup", extras="true")
+    try:
+        if not ctx.control.status().get("casting"):
+            started = start_cast(ctx)
+            if started.status != "pass":
+                return Result("env", f"cast start: {started.detail}")
+        # The test song (by now the queue may play one without lyrics).
+        video, link = TEST_VIDEO[ctx.app]
+        if ctx.control.status().get("currentVideoId") != video:
+            since = ctx.logs.mark()
+            ctx.phone.sh(f"am start -a android.intent.action.VIEW -d '{link}' -p {ctx.package}")
+            if not ctx.logs.wait(rf"Loading {video} ", 30, since):
+                return Result("env", "test song not cast")
+        url = f"http://127.0.0.1:8720/extras/{video}.json"
+
+        def lyrics():
+            try:
+                doc = json.loads(_http(url))
+            except Exception:
+                return None
+            return doc if doc.get("lyrics") else None
+        doc = until(lyrics, 30)
+        if not doc:
+            found = ctx.logs.find_all(r"Lyrics for " + re.escape(video or "") + r": ")
+            return Result("fail", "no lyrics in the extras", {"log": found[-3:]})
+        lines = doc["lyrics"].get("lines", [])
+        timed = sum(1 for l in lines if "start" in l)
+        evidence = {"provider": doc["lyrics"].get("provider"), "synced": doc["lyrics"].get("synced"),
+                    "lines": len(lines), "timed": timed, "first": lines[:2],
+                    "captions": [c.get("label") for c in doc.get("captions", [])]}
+        # The text itself is the providers' (LRCLIB's entry for the test song is vandalized):
+        # check that lyrics arrive, and timed throughout when they are synced.
+        ok = len(lines) >= 1 and (not doc["lyrics"].get("synced") or timed == len(lines))
+        return Result("pass" if ok else "fail", f"{len(lines)} lines from {evidence['provider']}", evidence)
+    finally:
+        if not asks:
+            ctx.control.cmd("setup", extras="false")
+
+
 def renderer_extras(ctx: Context) -> Result:
     """Extras only for renderers that ask: one that does not gets plain metadata. One that asks
     (the test renderer may; otherwise forced here) finds a <desc> in the metadata pointing to the
@@ -933,7 +1016,9 @@ def sponsorblock(ctx: Context) -> Result:
         ("no segments loaded", not segments),
         ("no skip on the phone", not skipped),
         ("skip not sent to the TV", skipped and "NOT sent" in skipped[0]),
-        ("TV not past the segment", not any(p >= end - 1000 for p in after))] if bad]
+        # The segment runs to the end: a TV that ended right after the skip got past it too.
+        ("TV not past the segment", not any(p >= end - 1000 for p in after)
+         and not any("3 s after" in line and "state STOPPED" in line for line in lines))] if bad]
     # Back to the test video for the scenarios after this one.
     if main_video:
         ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={main_video}' "
@@ -1119,6 +1204,8 @@ def _http_bytes(url: str) -> bytes:
 
 def avtransport_next(ctx: Context) -> Result:
     """Renderers without OpenHome get the next title (SetNextAVTransportURI) and the phone follows."""
+    # A cast still running would show the renderer as connected: from the start.
+    ctx.control.cmd("stop")
     ctx.control.cmd("setup", avTransportOnly="true")
     ctx.renderer.use_openhome = False
     try:
@@ -1262,6 +1349,7 @@ SCENARIOS = [
     ("song_mode", song_mode, {"music"}),
     ("video_mode", video_mode, {"music"}),
     ("shorts_ignored", shorts_ignored, {"yt"}),
+    ("audio_language", audio_language, {"yt"}),
     ("renderer_extras", renderer_extras, {"yt"}),
     ("sponsorblock", sponsorblock, {"yt"}),
     ("screen_lock", screen_lock, {"yt", "music"}),
@@ -1269,6 +1357,7 @@ SCENARIOS = [
     ("hls_playback", hls_playback, {"yt"}),
     ("live_hls", live_hls, {"yt"}),
     ("avtransport_next", avtransport_next, {"music"}),
+    ("music_lyrics", music_lyrics, {"music"}),
     ("crossfade", crossfade, {"music"}),
     ("media_session", media_session, {"yt", "music"}),
     ("no_crash", no_crash, {"yt", "music"}),

@@ -110,6 +110,15 @@ class Renderer:
         else:
             self.soap("AVTransport", "Pause", "<InstanceID>0</InstanceID>")
 
+    def stop(self) -> None:
+        """Stops playback (both ways, OpenHome and AVTransport, whatever the last cast used)."""
+        for service, action, args in (("Playlist", "Stop", ""), ("AVTransport", "Stop", "<InstanceID>0</InstanceID>")):
+            if service in self.services:
+                try:
+                    self.soap(service, action, args)
+                except Exception:
+                    pass
+
     def play(self) -> None:
         if self.openhome:
             self.soap("Playlist", "Play")

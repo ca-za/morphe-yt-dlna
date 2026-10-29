@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import os
 import time
 import traceback
 from pathlib import Path
@@ -122,6 +123,10 @@ def _run_scenarios(apk: build.ApkInfo, bundle: Path, args, out_dir: Path, watch:
                 lost = watch.lost()
                 if lost:
                     raise EmulatorLost(f"{lost} during {name}")
+            # A look at the screen after a scenario (YTDLNA_SHOT_AFTER=<name>[,<name>...]).
+            if name in os.environ.get("YTDLNA_SHOT_AFTER", "").split(","):
+                phone.screenshot(out_dir / f"after-{name}.png")
+                (out_dir / f"after-{name}.xml").write_text(phone.sh("uiautomator dump /dev/tty"))
             if result.status == "fail":
                 shot = out_dir / f"fail-{name}.png"
                 phone.screenshot(shot)
@@ -136,6 +141,9 @@ def _run_scenarios(apk: build.ApkInfo, bundle: Path, args, out_dir: Path, watch:
             ctx.control.cmd("stop", timeout=5)
         except Exception:
             pass
+        # Nothing plays on after the run: not on the TV, not on the phone.
+        ctx.renderer.stop()
+        phone.sh(f"am force-stop {package}")
         logs.close()
 
     # A crash with all later scenarios passing is unlikely, but the results would not be trustworthy.

@@ -57,7 +57,10 @@ final class RendererExtras {
         // Morphe holds the segments of one video at a time, null until it loaded them.
         boolean known = !SponsorBlock.available() || (raw != null && videoId.equals(SponsorBlock.videoId()));
         List<SponsorBlock.Segment> segments = known ? SponsorBlock.segments(raw) : java.util.Collections.emptyList();
-        boolean complete = known || timedOut;
+        // In YouTube Music, also until Morphe's lyrics search for the song is done.
+        MusicLyrics.Snapshot lyrics = MusicLyrics.read(videoId);
+        boolean lyricsDone = !MusicLyrics.available() || (lyrics != null && lyrics.settled());
+        boolean complete = (known && lyricsDone) || timedOut;
         try {
             JSONObject doc = new JSONObject()
                     .put("version", VERSION)
@@ -66,11 +69,14 @@ final class RendererExtras {
                     .put("segments", segmentsJson(segments))
                     .put("chapters", new JSONArray())
                     .put("captions", Captions.extrasJson(videoId, baseUrl, Captions.selected(videoId)))
+                    .put("lyrics", lyrics != null && lyrics.hasLines() ? MusicLyrics.json(lyrics) : JSONObject.NULL)
                     // Who skips segments: so far always the phone (its seek reaches the renderer).
                     .put("skipBy", "phone");
             if (durationMs > 0) doc.put("duration", durationMs / 1000.0);
             NativeProxy.nativePutText(path(videoId), MIME, doc.toString());
-            Log.d("Extras for " + videoId + ": " + segments.size() + " segments" + (complete ? ", complete" : ""));
+            Log.d("Extras for " + videoId + ": " + segments.size() + " segments"
+                    + (lyrics != null && lyrics.hasLines() ? ", " + lyrics.lines.size() + " lyrics lines" : "")
+                    + (complete ? ", complete" : ""));
         } catch (JSONException e) {
             Log.e("Building the extras for " + videoId + " failed", e);
         }

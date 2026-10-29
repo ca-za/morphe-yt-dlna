@@ -46,8 +46,6 @@ final class VideoCover {
     private static int artColor;
     /** Background of the cover without art, and of YouTube's. */
     private static final int BLACK = 0xFF000000;
-    /** Where the background gradient ends (Spotify's dark gray). */
-    private static final int GRADIENT_END = 0xFF121212;
     private static String title = "";
 
     private static final Runnable scan = VideoCover::scan;
@@ -91,6 +89,7 @@ final class VideoCover {
     private static void scan() {
         Activity activity = activityRef.get();
         CastSession session = CastSession.active();
+        lockPortrait(activity, session != null);
         // Shorts or a feed preview in front play on the phone: nothing to cover.
         if (activity == null || session == null || MorpheState.sidePlayer() != null) {
             removeAll();
@@ -103,7 +102,119 @@ final class VideoCover {
             if (!surfaces.contains(surface)) remove(surface);
         }
         for (View surface : surfaces) place(surface, session);
+        updatePage(activity);
     }
+
+    // region YouTube Music: the gradient behind the whole player page
+
+    /**
+     * The player page's background view while it shows our gradient (as its foreground: the app
+     * animates its background as a plain color), and the foreground it had before.
+     */
+    private static WeakReference<View> pageRef = new WeakReference<>(null);
+    private static android.graphics.drawable.Drawable pageOriginal;
+    private static int pageColor;
+
+    /**
+     * Like Spotify: the cover's gradient behind the whole player page (its backmost view, so the
+     * controls stay on top), and our cover over the video turns transparent to match.
+     */
+    private static void updatePage(Activity activity) {
+        boolean want = Track.musicApp && !covers.isEmpty() && art != null && artColor != 0;
+        View page = want ? findPage(activity) : null;
+        View applied = pageRef.get();
+        if (applied != null && applied != page) restorePage();
+        if (page == null) return;
+        if (pageRef.get() == null) {
+            pageOriginal = page.getForeground();
+            pageRef = new WeakReference<>(page);
+            pageColor = 0;
+        }
+        if (pageColor != artColor) {
+            page.setForeground(pageBackground(artColor));
+            pageColor = artColor;
+        }
+        for (FrameLayout cover : covers.values()) {
+            android.graphics.drawable.Drawable bg = cover.getBackground();
+            if (!(bg instanceof PageSlice) || ((PageSlice) bg).color != artColor || ((PageSlice) bg).page != page) {
+                cover.setBackground(new PageSlice(page, cover, artColor));
+            }
+        }
+    }
+
+    /**
+     * The part of the page's gradient behind a cover (the app's player area under it is black):
+     * one gradient from the top of the page to the bottom, through the cover.
+     */
+    private static final class PageSlice extends android.graphics.drawable.Drawable {
+        final View page;
+        final View cover;
+        final int color;
+        private final android.graphics.drawable.Drawable gradient;
+        private final int[] pageAt = new int[2];
+        private final int[] coverAt = new int[2];
+
+        PageSlice(View page, View cover, int color) {
+            this.page = page;
+            this.cover = cover;
+            this.color = color;
+            this.gradient = pageBackground(color);
+        }
+
+        @Override
+        public void draw(android.graphics.Canvas canvas) {
+            page.getLocationInWindow(pageAt);
+            cover.getLocationInWindow(coverAt);
+            int dx = pageAt[0] - coverAt[0];
+            int dy = pageAt[1] - coverAt[1];
+            gradient.setBounds(dx, dy, dx + page.getWidth(), dy + page.getHeight());
+            gradient.draw(canvas);
+        }
+
+        @Override
+        public void setAlpha(int alpha) {
+            gradient.setAlpha(alpha);
+        }
+
+        @Override
+        public void setColorFilter(android.graphics.ColorFilter filter) {
+            gradient.setColorFilter(filter);
+        }
+
+        @Override
+        public int getOpacity() {
+            return android.graphics.PixelFormat.OPAQUE;
+        }
+    }
+
+    private static View findPage(Activity activity) {
+        int id = activity.getResources().getIdentifier("player_page_background", "id", activity.getPackageName());
+        View page = id == 0 ? null : activity.findViewById(id);
+        return page != null && page.isShown() ? page : null;
+    }
+
+    /** Gives the player page its own background back; covers get theirs again. */
+    private static void restorePage() {
+        View page = pageRef.get();
+        if (page != null) page.setForeground(pageOriginal);
+        pageRef = new WeakReference<>(null);
+        pageOriginal = null;
+        pageColor = 0;
+        for (FrameLayout cover : covers.values()) {
+            cover.setBackground(background(Track.musicApp && art != null ? artColor : 0));
+        }
+    }
+
+    /** The cover's color at the top, dark gray from the middle of the page down. */
+    private static android.graphics.drawable.Drawable pageBackground(int color) {
+        // Like Spotify's player today: the color over the whole page, only a little darker
+        // toward the bottom.
+        return new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{color, color, blend(color, BLACK, 0.18f), blend(color, BLACK, 0.32f)});
+    }
+
+    // endregion
 
     private static void findSurfaces(View view, List<View> out) {
         if ((view instanceof SurfaceView || view instanceof TextureView)
@@ -142,7 +253,7 @@ final class VideoCover {
 
         // Exactly over the video; in YouTube Music over its whole player area (the video is a
         // 16:9 strip in it, the rest black).
-        View area = Track.musicApp ? playerArea(surface, container) : surface;
+        View area = playerArea(surface, container);
         int[] surfaceLocation = new int[2];
         int[] containerLocation = new int[2];
         area.getLocationInWindow(surfaceLocation);
@@ -163,7 +274,36 @@ final class VideoCover {
         bind(cover, session, area.getWidth(), area.getHeight());
     }
 
-    /** YouTube Music's player view ("watch_player") around the surface, up to the container. */
+    // region Portrait while casting
+
+    /** Activities whose orientation we locked, with the orientation they asked for before. */
+    private static final Map<Activity, Integer> lockedFrom = new WeakHashMap<>();
+
+    /**
+     * Keeps the app in portrait while casting (the video plays on the TV; landscape only
+     * reshuffles the controls), also when the app asks for landscape (YouTube's fullscreen). The
+     * app's own orientation comes back with the end of the cast.
+     */
+    private static void lockPortrait(Activity activity, boolean casting) {
+        int portrait = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+        if (casting && activity != null) {
+            if (!lockedFrom.containsKey(activity)) lockedFrom.put(activity, activity.getRequestedOrientation());
+            if (activity.getRequestedOrientation() != portrait) activity.setRequestedOrientation(portrait);
+            return;
+        }
+        if (casting) return;
+        for (Map.Entry<Activity, Integer> e : new ArrayList<>(lockedFrom.entrySet())) {
+            Activity locked = e.getKey();
+            if (locked != null && locked.getRequestedOrientation() == portrait) {
+                locked.setRequestedOrientation(e.getValue());
+            }
+        }
+        lockedFrom.clear();
+    }
+
+    // endregion
+
+    /** The app's player view ("watch_player") around the surface, up to the container. */
     private static View playerArea(View surface, FrameLayout container) {
         for (ViewParent v = surface.getParent(); v instanceof View && v != container; v = v.getParent()) {
             if ("watch_player".equals(safeName((View) v))) return (View) v;
@@ -207,6 +347,17 @@ final class VideoCover {
 
         ImageView image = new ImageView(container.getContext());
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        if (Track.musicApp) {
+            // Slightly rounded corners, like an album cover in Spotify.
+            float radius = 8 * container.getResources().getDisplayMetrics().density;
+            image.setOutlineProvider(new android.view.ViewOutlineProvider() {
+                @Override
+                public void getOutline(View view, android.graphics.Outline outline) {
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radius);
+                }
+            });
+            image.setClipToOutline(true);
+        }
         column.addView(image, new LinearLayout.LayoutParams(0, 0));
 
         TextView text = new TextView(container.getContext());
@@ -235,8 +386,9 @@ final class VideoCover {
 
         int imageWidth;
         int imageHeight;
-        if (Track.musicApp && art != null) {
-            // YouTube Music: the cover as large as it fits, whole (not cropped), above the label.
+        if (art != null) {
+            // The cover (YouTube: the video's thumbnail) as large as it fits, whole (not cropped),
+            // above the label.
             int pad = Math.round((small ? 4 : 16) * density);
             int textHeight = 0;
             if (!small) {
@@ -272,9 +424,7 @@ final class VideoCover {
      */
     private static android.graphics.drawable.Drawable background(int color) {
         if (color == 0) return new android.graphics.drawable.ColorDrawable(BLACK);
-        return new android.graphics.drawable.GradientDrawable(
-                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{color, blend(color, GRADIENT_END, 0.55f), GRADIENT_END});
+        return pageBackground(color);
     }
 
     private static int blend(int a, int b, float t) {
@@ -324,7 +474,9 @@ final class VideoCover {
             color = android.graphics.Color.rgb((int) (r / count), (int) (g / count), (int) (b / count));
         }
         android.graphics.Color.colorToHSV(color, hsv);
-        hsv[2] = Math.max(0.22f, Math.min(hsv[2], 0.55f));
+        // Vivid, but dark enough for white text on it.
+        if (hsv[1] > 0.15f) hsv[1] = Math.min(1f, hsv[1] * 1.15f);
+        hsv[2] = Math.max(0.3f, Math.min(hsv[2], 0.6f));
         return android.graphics.Color.HSVToColor(hsv);
     }
 
@@ -336,6 +488,7 @@ final class VideoCover {
     }
 
     private static void removeAll() {
+        restorePage();
         for (View surface : new ArrayList<>(covers.keySet())) remove(surface);
     }
 

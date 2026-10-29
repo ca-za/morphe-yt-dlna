@@ -29,6 +29,11 @@ final class LocalPlayback {
         Proto.Field smallestVideo = null;
         long smallestVideoScore = Long.MAX_VALUE;
         boolean hasVideo = false;
+        boolean hasDefaultTrack = false;
+        for (Proto.Field field : fields) {
+            if (field.number == SD_ADAPTIVE_FORMATS && field.wireType == Proto.BYTES
+                    && isDefaultTrack(Proto.parse(field.data))) hasDefaultTrack = true;
+        }
         for (Proto.Field field : fields) {
             if (field.number == SD_FORMATS) {
                 hasVideo = true;
@@ -47,6 +52,8 @@ final class LocalPlayback {
                     }
                 } else if (mime.startsWith("audio/")) {
                     long bitrate = Proto.varint(format, F_BITRATE);
+                    // Of a video with several languages, a format of the default track.
+                    if (hasDefaultTrack && !isDefaultTrack(format)) continue;
                     if (bitrate > 0 && bitrate < smallestBitrate) {
                         smallestBitrate = bitrate;
                         smallestAudio = field;
@@ -65,6 +72,17 @@ final class LocalPlayback {
         }
         if (!hasVideo && kept == countFormats(fields)) return null; // Already minimal.
         return out.toByteArray();
+    }
+
+    /** An audio format of the track YouTube plays by default (videos with several languages). */
+    private static boolean isDefaultTrack(List<Proto.Field> format) {
+        Proto.Field track = Proto.first(format, StreamInfo.F_AUDIO_TRACK);
+        if (track == null || track.wireType != Proto.BYTES) return false;
+        try {
+            return Proto.varint(Proto.parse(track.data), StreamInfo.AT_DEFAULT) != 0;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private static int codecRank(String mime) {
