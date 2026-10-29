@@ -72,9 +72,9 @@ In Morphe's settings, under Player:
 - With album covers on, YouTube Music sends title and artist to Deezer / iTunes.
 
 <!-- PATCHES_START EXPANDED -->
-> **[v0.1.8-alpha](https://github.com/ca-za/morphe-yt-dlna/releases/tag/v0.1.8-alpha)**&nbsp;&nbsp;•&nbsp;&nbsp;`dev`&nbsp;&nbsp;•&nbsp;&nbsp;11 patches total
+> **[v0.1.9-alpha](https://github.com/ca-za/morphe-yt-dlna/releases/tag/v0.1.9-alpha)**&nbsp;&nbsp;•&nbsp;&nbsp;`dev`&nbsp;&nbsp;•&nbsp;&nbsp;13 patches total
 <details open>
-<summary>📦 YouTube&nbsp;&nbsp;•&nbsp;&nbsp;5 patches</summary>
+<summary>📦 YouTube&nbsp;&nbsp;•&nbsp;&nbsp;6 patches</summary>
 <br>
 
 **🎯 Supported versions:**
@@ -85,6 +85,7 @@ In Morphe's settings, under Player:
 | 💊&nbsp;Patch | 📜&nbsp;Description | ⚙️&nbsp;Options |
 |----------|----------------|-----------|
 | [DLNA Sonos rooms](#dlna-sonos-rooms) | Sonos groups in the device list (one row per group, named after its room), a rooms dialog to add or remove rooms and set their volume, the group's volume on the volume keys, and the same for renderers that feed Sonos rooms themselves. |  |
+| [DLNA app icon](#dlna-app-icon) | An app icon for DLNA casting: YouTube as a screen, YouTube Music as a record, each with a play button and cast waves. Replaces the icon of "Custom branding" too (all its styles then show this one). | • Icon style |
 | [DLNA cast](#dlna-cast) | Adds DLNA / UPnP casting to the cast button. Streams the current video or song to a DLNA media renderer on the local network. Requires the official Morphe patches (with GmsCore support). The cast button shows when a DLNA renderer is found; turn off Morphe's "Hide cast button" (on by default) to see it. Casting from the share menu works either way. | • Test hooks |
 | [DLNA player controls](#dlna-player-controls) | While casting, YouTube keeps the player controls on screen (no hide timer), so the renderer can be controlled at a glance. A tap still hides and shows them. |  |
 | [DLNA portrait lock](#dlna-portrait-lock) | Keeps the phone upright while casting (the video plays on the TV). |  |
@@ -93,7 +94,7 @@ In Morphe's settings, under Player:
 </details>
 
 <details open>
-<summary>📦 YouTube Music&nbsp;&nbsp;•&nbsp;&nbsp;6 patches</summary>
+<summary>📦 YouTube Music&nbsp;&nbsp;•&nbsp;&nbsp;7 patches</summary>
 <br>
 
 **🎯 Supported versions:**
@@ -104,6 +105,7 @@ In Morphe's settings, under Player:
 | 💊&nbsp;Patch | 📜&nbsp;Description | ⚙️&nbsp;Options |
 |----------|----------------|-----------|
 | [DLNA Sonos rooms](#dlna-sonos-rooms) | Sonos groups in the device list (one row per group, named after its room), a rooms dialog to add or remove rooms and set their volume, the group's volume on the volume keys, and the same for renderers that feed Sonos rooms themselves. |  |
+| [DLNA app icon](#dlna-app-icon) | An app icon for DLNA casting: YouTube as a screen, YouTube Music as a record, each with a play button and cast waves. Replaces the icon of "Custom branding" too (all its styles then show this one). | • Icon style |
 | [DLNA cast](#dlna-cast) | Adds DLNA / UPnP casting to the cast button. Streams the current video or song to a DLNA media renderer on the local network. Requires the official Morphe patches (with GmsCore support). The cast button shows when a DLNA renderer is found; turn off Morphe's "Hide cast button" (on by default) to see it. Casting from the share menu works either way. | • Test hooks |
 | [DLNA cover page](#dlna-cover-page) | While casting, YouTube Music's player shows the album cover on its colors over the whole page (darker toward the bottom, fading to the next song's), like Spotify. |  |
 | [DLNA portrait lock](#dlna-portrait-lock) | Keeps the phone upright while casting (the video plays on the TV). |  |

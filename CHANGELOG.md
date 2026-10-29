@@ -1,3 +1,9 @@
+## [0.1.9-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.8-alpha...v0.1.9-alpha) (2026-10-29)
+
+### ✨ New Features
+
+* DLNA app icon, an optional icon for YouTube and YouTube Music ([f8efe33](https://github.com/ca-za/morphe-yt-dlna/commit/f8efe333c97e72bc483fafe964c8ee7f63c92a20))
+
 ## [0.1.8-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.7-alpha...v0.1.8-alpha) (2026-10-29)
 
 ### 🐛 Bug Fixes
