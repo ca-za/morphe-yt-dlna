@@ -25,11 +25,12 @@ case "$app" in
   *) echo "unknown app: $app" >&2; exit 1 ;;
 esac
 
-desktop=$(ls tools/morphe-desktop-*-all.jar | head -1)
-official=$(ls tools/patches-*.mpp | head -1)
+# The newest of each (older ones may be lying around).
+desktop=$(ls -t tools/morphe-desktop-*-all.jar | head -1)
+official=$(ls -t tools/patches-*.mpp | head -1)
 
 ./gradlew buildAndroid --console=plain -q
-ours=$(ls patches/build/libs/patches-*.mpp | head -1)
+ours=$(ls -t patches/build/libs/patches-*.mpp | head -1)
 
 mkdir -p out
 java -jar "$desktop" patch \

@@ -13,11 +13,21 @@ add-on to the official [Morphe](https://morphe.software) patches.
 - **Formats**: DASH up to 4K, HLS up to 1080p for renderers without DASH, live streams as HLS.
 - **Metadata**: title, artist (channel), cover, and in YouTube Music album, year and label from
   Deezer or iTunes. The OpenHome playlist or SetNextAVTransportURI gives the TV the next title.
-- **YouTube Music**: song and video mode reach the TV.
+- **YouTube Music**: song and video mode reach the TV; the player shows the album cover on its
+  colors while casting.
+- **Extras for renderers that ask for them**: captions, lyrics (YouTube Music), SponsorBlock
+  segments and chapters, see [docs/renderer-guide.md](docs/renderer-guide.md). Plain renderers
+  get the same as before.
+- **Sonos**: groups shown by room, a rooms dialog to add or remove rooms and set their volume,
+  and the group's volume on the volume keys.
+- **Optional parts as patches of their own** (all on by default, each needs only "DLNA cast"):
+  DLNA cover page, DLNA player controls, DLNA portrait lock, DLNA Sonos rooms, DLNA renderer
+  extras. **DLNA session notifications** (YouTube Music, off by default) notices casts of other
+  phones in the Wi-Fi and offers a remote control (media session).
 
 ## Install
 
-> **Alpha**: releases are pre-releases (`1.0.0-alpha.N`) for now.
+> **Alpha**: releases are pre-releases (`v0.1.N-alpha`) for now.
 
 The patch is an add-on: it is applied **together with** the official Morphe patches, which
 Morphe Manager does only in Expert mode (in Simple mode it applies one source per app).
@@ -45,6 +55,9 @@ In Morphe's settings, under Player:
   picker, leading to the app's own cast dialog.
 - **DLNA: Album covers from music databases** (YouTube Music, on): looks up album covers and
   details on Deezer or iTunes; title and artist are sent to these services.
+- **DLNA: Captions** (both apps, on): sends the video's captions to renderers that take them.
+- **DLNA: Debug log** (both apps, off): records a log for bug reports and shows "Share debug
+  log" in the picker.
 
 ## How it works and what leaves the phone
 

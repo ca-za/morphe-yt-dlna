@@ -62,8 +62,32 @@ the patch, needs a look), ℹ️ info (observation only), ⏭️ skip.
 | phone_next / tv_next | title changes in both directions (Music) |
 | song_mode / video_mode | song/video switch reaches the TV (Music) |
 | screen_lock | casting continues 30 s with the phone locked |
+| cast_button_follows | the cast button hides without renderers and comes back (Music) |
+| google_cast_link | "Google Cast…" in the picker follows its setting |
+| manual_devices | renderers added by address are listed and can be removed |
+| ui_controls | the player's own buttons reach the TV |
+| scrubber_seek | seeking with the progress bar reaches the TV |
+| shorts_ignored | a Short opened while casting plays on the phone, the TV plays on (YouTube) |
+| audio_language | the default audio track of a multi-language video is cast (YouTube) |
+| renderer_extras | extras document, captions and the `<desc>` link for renderers that ask; plain renderers unchanged (YouTube) |
+| music_lyrics | lyrics in the extras and as a caption track (Music) |
+| sponsorblock | SponsorBlock skips reach the TV (YouTube) |
+| hls_playback / live_hls | HLS for renderers without DASH, live streams |
+| avtransport_next | renderers without OpenHome get the next title and the phone follows (Music) |
+| crossfade | Morphe's crossfade does not break the cast (Music) |
+| media_session | the cast follows the app's media session (local controls, queue, playlist) |
 | stop_cast | TV stops, phone gets sound and video back, notification gone |
 | no_crash | no crash of the app during the run |
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `YTDLNA_EXTRA_PATCHES` | optional patches to apply too, comma separated (e.g. `DLNA session notifications`) |
+| `YTDLNA_KEEP_CAST` | leave the cast running after the run (for a manual look) |
+| `YTDLNA_SHOT_AFTER` | screenshot and UI dump after each scenario |
+| `YTDLNA_COVER_SHOT` | file for a screenshot of the cover in video mode |
+| `YTDLNA_SHORT_VIDEO`, `YTDLNA_LIVE_VIDEO`, `YTDLNA_SPONSOR_VIDEO`, `YTDLNA_MULTI_AUDIO_VIDEO` | other test videos for those scenarios |
 
 ## Emulator crashes
 

@@ -98,12 +98,6 @@ final class SponsorBlock {
         return segments(raw());
     }
 
-    /** The auto-skip segment at this position, or null. */
-    static Segment autoSkipAt(List<Segment> segments, long position) {
-        for (Segment s : segments) if (s.autoSkip && s.contains(position)) return s;
-        return null;
-    }
-
     static String seconds(long ms) {
         return String.format(Locale.US, "%.1f", ms / 1000.0);
     }

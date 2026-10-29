@@ -148,7 +148,8 @@ folgt dem Renderer.
 
 ## 8. Raumgruppe: Sonos-Räume über den Renderer (Entwurf)
 
-**Entwurf:** Die Renderer-Seite ist noch nicht gebaut; Details können sich ändern.
+Der Renderer android-airplay-server bietet den Dienst an (mit Einmessung über
+`CalibrationPlay`, siehe dort); Details können sich noch ändern.
 
 Ein Renderer, der den Ton des Casts selbst an Sonos-Räume weitergibt, bietet auf seinem
 MediaRenderer-Gerät den Dienst `urn:ytdlna-org:service:Zones:1` an. Die App zeigt ihn dann wie

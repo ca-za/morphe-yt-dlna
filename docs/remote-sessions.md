@@ -1,6 +1,9 @@
 # Konzept: Sessions im WLAN (Fernsteuern und Mitmachen, wie Spotify Connect)
 
-Status: Entwurf, nicht umgesetzt.
+Status: teilweise umgesetzt. Erkennung im Hintergrund mit Benachrichtigung und Fernsteuerung
+(Media Session) gibt es im Patch „DLNA session notifications“, Sonos-Gruppen und Räume im Patch
+„DLNA Sonos rooms“ (siehe die Abschnitte unten). Offen sind Session-Host, Mitmachen und das
+Bearbeiten der Warteschlange.
 
 ## Ziel
 
@@ -215,8 +218,8 @@ Die Session führt die Renderer mit ihrer Rolle. Lautstärke gibt es je Renderer
 2. **Warteschlange bearbeiten (OpenHome)** mit Variante A und B für die Streams. Mittel.
 3. **Session-Host:** Ankündigung (DNS-SD und SSDP), Steuer-API, Rechte. Damit auch
    AVTransport-Renderer. Mittel bis groß.
-4. **Hintergrund:** WLAN-Auslöser, Kachel, Benachrichtigung; der periodische Job erst nach Messung.
-   Mittel.
+4. **Hintergrund:** WLAN-Auslöser, Benachrichtigung, periodischer Job, Fernsteuerung.
+   **Umgesetzt** (ohne Kachel).
 5. **Mehrere Renderer:** Sonos-Gruppen, Party-Sync, Songcast. Groß, am besten zusammen mit deinem
    Renderer.
 
@@ -230,4 +233,4 @@ mitsteuern“, und baut direkt auf dem auf, was es schon gibt.
   entfällt; ein Token bleibt nur, um Teilnehmer zu unterscheiden („hinzugefügt von …“).
 - **Nur YouTube Music:** Sessions gibt es nur in der Music-App. Die YouTube-App bekommt die
   Funktion nicht und zeigt auch keine Music-Sessions an.
-- **Hintergrund-Job:** offen (siehe „Erkennung im Hintergrund“).
+- **Hintergrund-Job:** eigener leichter Prozess, umgesetzt (siehe „Erkennung im Hintergrund“).

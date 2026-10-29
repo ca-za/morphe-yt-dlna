@@ -1,7 +1,10 @@
 # Konzept: SponsorBlock, Untertitel und Hinweise für den Renderer
 
 Status: Stufe 1 (Extras-Dokument mit SponsorBlock-Abschnitten) und Stufe 2 (Untertitel) sind
-umgesetzt; Abweichungen vom Entwurf stehen unter „Umgesetzt“ am Ende. Stufen 3 und 4 sind offen.
+umgesetzt, dazu Lyrics (YouTube Music), Kapitel und ein Platzhalter-Dokument für Titel der
+Warteschlange; alles im Patch „DLNA renderer extras“. Abweichungen vom Entwurf stehen unter
+„Umgesetzt“ am Ende. Stufen 3 und 4 sind offen. Die Anleitung für Renderer-Entwickler:
+[renderer-guide.md](renderer-guide.md).
 
 Ziel: Ein Renderer soll SponsorBlock-Abschnitte, Untertitel und Texthinweise (etwa „Sponsor
 übersprungen“) kennen und selbst berücksichtigen können. Jeder andere DLNA/UPnP-Renderer und
@@ -224,7 +227,7 @@ Für Tests bekommt der Test-Renderer (AirPlay-Emulator) bzw. ein kleiner Mock di
 und die Regressionstests prüfen, dass ein Renderer ohne Ankündigung byte-gleiche Metadaten
 bekommt.
 
-## Umgesetzt (Stand v0.1.1-alpha)
+## Umgesetzt
 
 - **Extras-Dokument** unter `/extras/<videoId>.json` mit `segments` (Morphes Abschnitte und die
   Einstellung je Kategorie) und `captions`; `chapters` ist noch leer. Der Proxy liefert Texte

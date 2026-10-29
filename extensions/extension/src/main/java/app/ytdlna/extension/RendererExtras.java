@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * Extra data about the cast title for renderers that ask for it: SponsorBlock segments (with
- * the user's setting per category), later chapters and captions. See docs/renderer-extras.md.
+ * the user's setting per category), chapters, captions and lyrics. See docs/renderer-extras.md.
  * <p>
  * A renderer asks by listing {@link #MIME} in its ConnectionManager sink protocols. It then finds
  * a {@code <desc>} block in the title's DIDL-Lite metadata pointing to a JSON document the phone's

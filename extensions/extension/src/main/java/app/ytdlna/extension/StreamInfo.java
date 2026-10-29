@@ -110,7 +110,6 @@ final class StreamInfo {
     /** Largest thumbnail of the video, "" if none. */
     String thumbnailUrl = "";
     final List<Format> formats = new ArrayList<>();
-    final long capturedAt = System.currentTimeMillis();
 
     private static String largestThumbnail(Proto.Field list) {
         if (list == null || list.wireType != Proto.BYTES) return "";

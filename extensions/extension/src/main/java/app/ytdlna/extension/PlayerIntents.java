@@ -81,7 +81,6 @@ public final class PlayerIntents {
             line.append(" player@").append(Integer.toHexString(System.identityHashCode(player)));
             line.append(" -> ").append(decision);
             Log.d(line.toString());
-            if (caller.startsWith("app") || caller.startsWith("morphe")) Log.d("  stack " + appFrames());
             org.json.JSONObject entry = new org.json.JSONObject()
                     .put("kind", kind).put("position", positionMs).put("source", source == null ? "" : source)
                     .put("reason", reason).put("caller", caller).put("decision", decision)
@@ -216,18 +215,5 @@ public final class PlayerIntents {
             list.removeFirst();
             return true;
         }
-    }
-
-    /** The app's (obfuscated) frames above the hook, to learn who sends a command. */
-    private static String appFrames() {
-        StringBuilder out = new StringBuilder();
-        int n = 0;
-        for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
-            String c = frame.getClassName();
-            if (c.startsWith("java.") || c.startsWith("dalvik.") || c.startsWith("app.ytdlna.")) continue;
-            if (n++ >= 8) break;
-            out.append(c).append('.').append(frame.getMethodName()).append(' ');
-        }
-        return out.toString();
     }
 }

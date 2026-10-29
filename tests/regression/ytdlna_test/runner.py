@@ -106,7 +106,7 @@ def _run_scenarios(apk: build.ApkInfo, bundle: Path, args, out_dir: Path, watch:
                 report["results"].append({"name": name, "status": "skip", "detail": f"after {aborted} failed"})
                 continue
             t0 = time.monotonic()
-            # Marks the scenario in the phone log (for tests/regression/intents.py).
+            # Marks the scenario in the phone log.
             phone.sh(f"log -t YtDlnaTest 'SCENARIO {name}'")
             result = _run_scenario(fn, ctx)
             if result.status == "fail":

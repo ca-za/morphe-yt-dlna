@@ -18,7 +18,6 @@ import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 import com.android.tools.smali.dexlib2.builder.MutableMethodImplementation
 import com.android.tools.smali.dexlib2.immutable.ImmutableMethod
-import com.android.tools.smali.dexlib2.immutable.ImmutableMethodParameter
 import app.ytdlna.patches.shared.Constants.COMPATIBILITY_YOUTUBE
 import app.ytdlna.patches.shared.Constants.COMPATIBILITY_YOUTUBE_MUSIC
 import org.w3c.dom.Element

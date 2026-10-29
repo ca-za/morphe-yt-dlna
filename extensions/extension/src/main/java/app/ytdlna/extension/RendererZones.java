@@ -105,7 +105,6 @@ final class RendererZones implements RoomsSheet.Source {
     }
 
     private static final Pattern ZONES = Pattern.compile("<Zones>(.*?)</Zones>", Pattern.DOTALL);
-    private static final Pattern VERSION = Pattern.compile("<Version>(\\d+)</Version>");
 
     /** Asks the renderer (cheap: it answers from a cache). Null if nothing changed. */
     static Snapshot refresh(DlnaDevice device) throws Exception {
