@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  * the title with a spinner while searching, the devices and then the actions, each with an icon.
  */
 final class DevicePicker {
-    enum Icon {TV, CAST, ADD, STOP, LINK, DELETE, SHARE, NONE}
+    enum Icon {TV, CAST, ADD, STOP, LINK, DELETE, SHARE, ROOMS, NONE}
 
     static final class Row {
         final Icon icon;
@@ -47,12 +47,19 @@ final class DevicePicker {
         final Runnable onClick;
         /** Non-null: a delete button at the end of the row. */
         final Runnable onDelete;
+        /** Non-null: a rooms button at the end of the row (Sonos). */
+        final Runnable onRooms;
 
         Row(Icon icon, String text, String subtitle, Runnable onClick) {
             this(icon, text, subtitle, onClick, null);
         }
 
         Row(Icon icon, String text, String subtitle, Runnable onClick, Runnable onDelete) {
+            this(icon, text, subtitle, onClick, onDelete, null);
+        }
+
+        Row(Icon icon, String text, String subtitle, Runnable onClick, Runnable onDelete, Runnable onRooms) {
+            this.onRooms = onRooms;
             this.icon = icon;
             this.text = text;
             this.subtitle = subtitle;
@@ -186,6 +193,17 @@ final class DevicePicker {
             texts.addView(subtitle);
         }
         view.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        if (row.onRooms != null) {
+            ImageView rooms = new ImageView(activity);
+            rooms.setImageDrawable(new IconDrawable(Icon.ROOMS, textColor));
+            rooms.setContentDescription(DlnaCast.t("Räume", "Rooms"));
+            rooms.setPadding(dp(12), dp(12), dp(12), dp(12));
+            rooms.setBackground(new RippleDrawable(ColorStateList.valueOf(dark ? 0x33FFFFFF : 0x1F000000), null, null));
+            rooms.setOnClickListener(v -> row.onRooms.run());
+            LinearLayout.LayoutParams roomsParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+            roomsParams.rightMargin = row.onDelete == null ? -dp(12) : 0;
+            view.addView(rooms, roomsParams);
+        }
         if (row.onDelete != null) {
             ImageView delete = new ImageView(activity);
             delete.setImageDrawable(new IconDrawable(Icon.DELETE, secondaryColor));
@@ -223,6 +241,10 @@ final class DevicePicker {
             case DELETE:
                 return "M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1z"
                         + "M18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z";
+            case ROOMS:
+                // Material "tune".
+                return "M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7z"
+                        + "m14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z";
             case SHARE:
                 return "M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7"
                         + "l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3"

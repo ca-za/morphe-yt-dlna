@@ -129,11 +129,17 @@ abstract class Renderer {
     /** Position in ms, or -1 if unknown. */
     abstract long position() throws Exception;
 
+    /** Master volume; for a Sonos group, the group's (all rooms together). */
     int volume() throws Exception {
+        if (Sonos.leadsGroup(device)) return Sonos.groupVolume(device);
         return DlnaController.volume(device);
     }
 
     void setVolume(int volume) throws Exception {
+        if (Sonos.leadsGroup(device)) {
+            Sonos.setGroupVolume(device, volume);
+            return;
+        }
         DlnaController.setVolume(device, volume);
     }
 

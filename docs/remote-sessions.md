@@ -152,8 +152,16 @@ Deshalb ereignisgesteuert, in einem eigenen leichten Prozess:
 DLNA kennt keine synchronen Gruppen. Drei Fälle:
 
 1. **Die Geräte können es selbst:**
-   - **Sonos:** Gruppen über die eigene UPnP-Erweiterung (`x-rincon:<Koordinator>`). Wir spielen
-     nur auf den Koordinator, Sonos synchronisiert sauber.
+   - **Sonos (umgesetzt):** Gruppen über die eigene UPnP-Erweiterung. Die Geräteliste liest die
+     Gruppen (`ZoneGroupTopology#GetZoneGroupState`) und zeigt je Gruppe eine Zeile mit dem Raum,
+     der sie führt („Küche + 1“); Gruppenmitglieder und versteckte Lautsprecher (zweiter
+     Lautsprecher eines Stereopaars, Sub, Surround) fallen weg. Gecastet wird auf diesen
+     Koordinator, Sonos spielt die anderen Räume synchron mit. Der Räume-Knopf der Zeile öffnet
+     einen Dialog wie in der Sonos-App: Räume hinzufügen (`SetAVTransportURI` mit
+     `x-rincon:<Koordinator>` auf dem Raum) oder entfernen (`BecomeCoordinatorOfStandaloneGroup`),
+     dazu die Lautstärke je Raum. Die Lautstärketasten regeln bei einer Gruppe die
+     Gruppenlautstärke (`GroupRenderingControl`, die Räume behalten ihr Verhältnis). Angezeigt
+     wird der Raumname (`roomName` der Gerätebeschreibung).
    - **OpenHome Songcast** (Sender und Receiver, etwa bei Linn): Ein Renderer sendet, die anderen
      empfangen synchron. Dein Renderer könnte das umsetzen.
 2. **Raum-zu-Raum („Party“), ohne Gerätehilfe:** Ein Renderer ist Leader und gibt die Uhr vor.

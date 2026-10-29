@@ -41,6 +41,12 @@ final class DlnaDevice {
     String infoType;
     String infoControlUrl;
 
+    // Sonos: rooms and groups (see Sonos).
+    String zoneGroupTopologyType;
+    String zoneGroupTopologyUrl;
+    String groupRenderingControlType;
+    String groupRenderingControlUrl;
+
     boolean hasOpenHomePlaylist() {
         return playlistControlUrl != null;
     }
@@ -111,6 +117,10 @@ final class DlnaDevice {
         String controlUrl = null;
         String eventUrl = null;
         int deviceDepth = 0;
+        // Per device element: its ConnectionManager, and whether it holds the AVTransport used.
+        // A renderer's own ConnectionManager wins over one of a sibling media server (Sonos).
+        String[] cmTypeAt = new String[16], cmUrlAt = new String[16];
+        boolean[] avAt = new boolean[16];
         StringBuilder text = new StringBuilder();
 
         for (int event = parser.getEventType(); event != XmlPullParser.END_DOCUMENT; event = parser.next()) {
@@ -118,7 +128,10 @@ final class DlnaDevice {
                 case XmlPullParser.START_TAG:
                     text.setLength(0);
                     String start = localName(parser.getName());
-                    if (start.equals("device")) deviceDepth++;
+                    if (start.equals("device") && ++deviceDepth < 16) {
+                        cmTypeAt[deviceDepth] = cmUrlAt[deviceDepth] = null;
+                        avAt[deviceDepth] = false;
+                    }
                     if (start.equals("service")) {
                         serviceType = null;
                         controlUrl = null;
@@ -165,7 +178,13 @@ final class DlnaDevice {
                                 String absoluteEvent = eventUrl == null || eventUrl.isEmpty()
                                         ? null : new URL(new URL(base), eventUrl).toString();
                                 // First match wins (root device before embedded devices).
+                                int d = Math.min(deviceDepth, 15);
+                                if (serviceType.startsWith(CONNECTION_MANAGER) && cmUrlAt[d] == null) {
+                                    cmTypeAt[d] = serviceType;
+                                    cmUrlAt[d] = absolute;
+                                }
                                 if (serviceType.startsWith(AV_TRANSPORT) && avTransportControlUrl == null) {
+                                    avAt[d] = true;
                                     avTransportType = serviceType;
                                     avTransportControlUrl = absolute;
                                     avTransportEventUrl = absoluteEvent;
@@ -190,6 +209,14 @@ final class DlnaDevice {
                                         && timeControlUrl == null) {
                                     timeType = serviceType;
                                     timeControlUrl = absolute;
+                                } else if (serviceType.startsWith("urn:schemas-upnp-org:service:ZoneGroupTopology:")
+                                        && zoneGroupTopologyUrl == null) {
+                                    zoneGroupTopologyType = serviceType;
+                                    zoneGroupTopologyUrl = absolute;
+                                } else if (serviceType.startsWith("urn:schemas-upnp-org:service:GroupRenderingControl:")
+                                        && groupRenderingControlUrl == null) {
+                                    groupRenderingControlType = serviceType;
+                                    groupRenderingControlUrl = absolute;
                                 } else if (serviceType.startsWith(CONNECTION_MANAGER)
                                         && connectionManagerControlUrl == null) {
                                     connectionManagerType = serviceType;
@@ -198,6 +225,10 @@ final class DlnaDevice {
                             }
                             break;
                         case "device":
+                            if (deviceDepth < 16 && avAt[deviceDepth] && cmUrlAt[deviceDepth] != null) {
+                                connectionManagerType = cmTypeAt[deviceDepth];
+                                connectionManagerControlUrl = cmUrlAt[deviceDepth];
+                            }
                             deviceDepth--;
                             break;
                         default:

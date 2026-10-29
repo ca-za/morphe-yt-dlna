@@ -337,14 +337,29 @@ public final class DlnaCast {
             List<DevicePicker.Row> rows = new ArrayList<>();
             CastSession session = CastSession.active();
             for (DlnaDevice device : devices) {
+                // Sonos: one row per group, for the room leading it; hidden speakers left out.
+                String name = device.friendlyName;
+                Runnable rooms = null;
+                Sonos.Group group = Sonos.is(device) ? Sonos.groupOf(device) : null;
+                if (group != null) {
+                    String uuid = Sonos.uuid(device);
+                    Sonos.Zone zone = Sonos.zone(Sonos.lastKnown(device), uuid);
+                    if (zone != null && zone.invisible) continue;
+                    boolean leads = group.coordinator.equals(uuid);
+                    if (!leads && listed(devices, group.coordinator)) continue;
+                    if (leads) name = group.label();
+                    // Rooms are changed for the group's leading room.
+                    DlnaDevice lead = leads ? device : null;
+                    if (lead != null) rooms = () -> SonosRooms.show(activity, lead, rebuildRef[0]);
+                }
                 boolean connected = session != null && session.device.location.equals(device.location);
                 String location = manualLocation(device, manual, manualByKey);
                 String subtitle = connected ? t("Verbunden", "Connected")
                         : "DLNA · " + (device.model().isEmpty() ? "" : device.model() + " · ")
                         + (location != null ? t("manuell · ", "manual · ") : "") + device.host();
-                rows.add(new DevicePicker.Row(DevicePicker.Icon.TV, device.friendlyName, subtitle,
+                rows.add(new DevicePicker.Row(DevicePicker.Icon.TV, name, subtitle,
                         choose.apply(() -> cast(activity, device, current)),
-                        location == null ? null : () -> remove.accept(location)));
+                        location == null ? null : () -> remove.accept(location), rooms));
             }
             for (String location : unreachable) {
                 rows.add(new DevicePicker.Row(DevicePicker.Icon.TV, hostOf(location),
@@ -400,6 +415,20 @@ public final class DlnaCast {
             if (!seen.add(deviceKey(device))) return;
             devices.add(device);
             rebuild.run();
+            if (Sonos.is(device)) {
+                SonosRooms.known(device);
+                // Groups: read once per household (the answer covers all its players).
+                if (Sonos.cached(device) == null) {
+                    background.execute(() -> {
+                        try {
+                            Sonos.refresh(device);
+                            main.post(rebuild);
+                        } catch (Exception e) {
+                            Log.d("Sonos groups not read: " + e);
+                        }
+                    });
+                }
+            }
         });
         DlnaDiscovery.Listener onSearched = device -> {
             main.post(() -> discovered.add(deviceKey(device)));
@@ -437,6 +466,12 @@ public final class DlnaCast {
                 rebuild.run();
             });
         });
+    }
+
+    /** Whether a Sonos player with this UUID is in the list. */
+    private static boolean listed(List<DlnaDevice> devices, String uuid) {
+        for (DlnaDevice d : devices) if (Sonos.is(d) && Sonos.uuid(d).equals(uuid)) return true;
+        return false;
     }
 
     private static String deviceKey(DlnaDevice device) {
@@ -574,7 +609,7 @@ public final class DlnaCast {
         return context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    private static int dialogTheme(Context context) {
+    static int dialogTheme(Context context) {
         int night = context.getResources().getConfiguration().uiMode
                 & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
         return night == android.content.res.Configuration.UI_MODE_NIGHT_YES
