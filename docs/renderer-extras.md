@@ -232,8 +232,8 @@ bekommt.
   gibt es nicht; der Renderer fragt erneut, solange `complete` `false` ist (spätestens 15 s nach
   dem Laden ist es `true`).
 - **Titel der Warteschlange** (OpenHome-Playlist, `SetNextAVTransportURI`) tragen den Verweis
-  schon; ihr Dokument gibt es erst, wenn das Handy den Titel spielt. Bis dahin antwortet der
-  Proxy mit 404.
+  schon. Bis das Handy den Titel spielt, liefert der Proxy ein leeres Dokument mit
+  `"complete": false`; danach das echte. 404 nur für Titel, die das Handy nicht kennt.
 - **Untertitel:** Die Spuren kommen aus der Player-Antwort der App (dieselben Adressen, die die
   App nutzt; ein Token ist dafür derzeit nicht nötig). Sie werden in SRT und WebVTT umgewandelt:
   `/captions/<videoId>.<sprache>[-auto].srt|vtt`.

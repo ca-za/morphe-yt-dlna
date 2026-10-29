@@ -137,13 +137,15 @@ def _run_scenarios(apk: build.ApkInfo, bundle: Path, args, out_dir: Path, watch:
             report["results"].append(entry)
             print(f"  {ICONS[result.status]} {name}: {result.detail}", flush=True)
     finally:
-        try:
-            ctx.control.cmd("stop", timeout=5)
-        except Exception:
-            pass
-        # Nothing plays on after the run: not on the TV, not on the phone.
-        ctx.renderer.stop()
-        phone.sh(f"am force-stop {package}")
+        # Nothing plays on after the run: not on the TV, not on the phone (unless asked to keep
+        # the cast for a manual check, YTDLNA_KEEP_CAST=1).
+        if not os.environ.get("YTDLNA_KEEP_CAST"):
+            try:
+                ctx.control.cmd("stop", timeout=5)
+            except Exception:
+                pass
+            ctx.renderer.stop()
+            phone.sh(f"am force-stop {package}")
         logs.close()
 
     # A crash with all later scenarios passing is unlikely, but the results would not be trustworthy.

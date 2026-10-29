@@ -34,6 +34,8 @@ final class DlnaDevice {
     String productControlUrl;
     String timeType;
     String timeControlUrl;
+    String infoType;
+    String infoControlUrl;
 
     boolean hasOpenHomePlaylist() {
         return playlistControlUrl != null;
@@ -170,6 +172,10 @@ final class DlnaDevice {
                                         && productControlUrl == null) {
                                     productType = serviceType;
                                     productControlUrl = absolute;
+                                } else if (serviceType.startsWith("urn:av-openhome-org:service:Info:")
+                                        && infoControlUrl == null) {
+                                    infoType = serviceType;
+                                    infoControlUrl = absolute;
                                 } else if (serviceType.startsWith("urn:av-openhome-org:service:Time:")
                                         && timeControlUrl == null) {
                                     timeType = serviceType;

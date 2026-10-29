@@ -74,6 +74,7 @@ final class StreamProxy {
     static synchronized void stop() {
         if (port <= 0) return;
         NativeProxy.nativeStop();
+        RendererExtras.reset();
         port = 0;
     }
 

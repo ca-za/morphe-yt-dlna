@@ -152,6 +152,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
 
     private void begin(StreamInfo first) {
         Log.i("Cast session started on " + device);
+        SessionWatch.setCasting(context, true);
         Log.i("SponsorBlock " + (SponsorBlock.available() ? "is in the app" : "is not in the app")
                 + ", debug log " + (DlnaCast.debugLogEnabled(context) ? "on" : "off"));
         main.postDelayed(this::watchSponsorBlock, SB_WATCH_MS);
@@ -208,6 +209,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         if (stopped) return;
         stopped = true;
         Log.i("Cast session stopped");
+        SessionWatch.setCasting(context, false);
         StreamCapture.removeListener(this);
         if (musicApp) MusicMode.setListener(null);
         local.detach();

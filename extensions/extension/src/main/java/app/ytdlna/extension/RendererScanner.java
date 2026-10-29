@@ -61,6 +61,8 @@ final class RendererScanner {
         if (app != null) return;
         app = application();
         if (app == null) return;
+        // Patch "DLNA session notifications": the background search (does nothing without it).
+        SessionWatch.schedule(app);
         ((Application) app).registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             @Override
             public void onActivityResumed(Activity activity) {

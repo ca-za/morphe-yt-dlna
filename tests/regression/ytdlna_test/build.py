@@ -91,8 +91,11 @@ def patch(apk: ApkInfo, bundle: Path, out_dir: Path) -> PatchResult:
     for name in DISABLED_OFFICIAL[apk.app]:
         cmd += ["-d", name]
     result_file = out_dir / "patch-result.json"
-    cmd += ["-p", str(bundle), "-e", "DLNA cast", "-O", "testHooks=true", "-r", str(result_file),
-            "-o", str(out), str(apk.path)]
+    cmd += ["-p", str(bundle), "-e", "DLNA cast", "-O", "testHooks=true"]
+    # Our optional patches, for testing them (YTDLNA_EXTRA_PATCHES="Name 1,Name 2").
+    for name in filter(None, (n.strip() for n in os.environ.get("YTDLNA_EXTRA_PATCHES", "").split(","))):
+        cmd += ["-e", name]
+    cmd += ["-r", str(result_file), "-o", str(out), str(apk.path)]
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env(), timeout=1800)
     log = proc.stdout + proc.stderr
     (out_dir / "patch.log").write_text(log)

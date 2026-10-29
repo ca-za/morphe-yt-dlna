@@ -34,6 +34,37 @@ final class RendererExtras {
         return forceAnnounce || device.lists(MIME);
     }
 
+    /** Titles whose real document is published (a placeholder must not replace it). */
+    private static final java.util.Set<String> published = java.util.Collections.newSetFromMap(
+            new java.util.concurrent.ConcurrentHashMap<>());
+
+    /**
+     * A queued title's document before the phone plays it: empty and not complete, so the
+     * renderer asks again (instead of a 404 until then). The real one replaces it once loaded.
+     */
+    static void publishPending(String videoId) {
+        if (published.contains(videoId)) return;
+        try {
+            JSONObject doc = new JSONObject()
+                    .put("version", VERSION)
+                    .put("videoId", videoId)
+                    .put("complete", false)
+                    .put("segments", new JSONArray())
+                    .put("chapters", new JSONArray())
+                    .put("captions", new JSONArray())
+                    .put("lyrics", JSONObject.NULL)
+                    .put("skipBy", "phone");
+            NativeProxy.nativePutText(path(videoId), MIME, doc.toString());
+        } catch (JSONException e) {
+            Log.e("Building the pending extras for " + videoId + " failed", e);
+        }
+    }
+
+    /** The proxy stopped and forgot all documents. */
+    static void reset() {
+        published.clear();
+    }
+
     static String path(String videoId) {
         return "/extras/" + videoId + ".json";
     }
@@ -74,6 +105,7 @@ final class RendererExtras {
                     .put("skipBy", "phone");
             if (durationMs > 0) doc.put("duration", durationMs / 1000.0);
             NativeProxy.nativePutText(path(videoId), MIME, doc.toString());
+            published.add(videoId);
             Log.d("Extras for " + videoId + ": " + segments.size() + " segments"
                     + (lyrics != null && lyrics.hasLines() ? ", " + lyrics.lines.size() + " lyrics lines" : "")
                     + (complete ? ", complete" : ""));

@@ -115,30 +115,38 @@ Jeder im WLAN darf fernsteuern und die Warteschlange bearbeiten (siehe „Entsch
 
 ## Erkennung im Hintergrund, mit wenig Akku
 
+Status: umgesetzt als eigener, abschaltbarer Patch „DLNA session notifications“ (nur YouTube
+Music, Standard: aus; das Aktivieren des Patches ist der Schalter).
+
 Ein Handy, das nicht castet, soll Sessions bemerken und eine Benachrichtigung zeigen wie Spotify
-(„Läuft auf Wohnzimmer TV – Fernbedienung“). Dauerhaftes Lauschen im Hintergrund (Multicast)
-kostet zu viel Akku, und Android drosselt es ohnehin. Deshalb ereignisgesteuert:
+(„Läuft auf Wohnzimmer TV“). Ein dauerhaft laufender Dienst, der im WLAN lauscht, kostet zu viel
+Akku: Android verlangt dafür eine ständige Benachrichtigung, das WLAN-Modul müsste Multicast
+dauernd annehmen, und im Tiefschlaf (Doze) sind Hintergrund-Apps ohnehin vom Netz getrennt.
+Deshalb ereignisgesteuert, in einem eigenen leichten Prozess:
 
-| Auslöser | Was passiert | Kosten |
-|---|---|---|
-| App wird geöffnet, Cast-Knopf | SSDP- und DNS-SD-Suche, 2 bis 3 s | wie heute |
-| Handy verbindet sich mit dem Heim-WLAN | `ConnectivityManager.registerNetworkCallback` mit `PendingIntent` weckt die App einmal, kurze Suche | ein kurzer Start pro WLAN-Verbindung |
-| Optional: periodisch, nur im WLAN | `JobScheduler`, alle 15 bis 30 min (Android-Minimum 15), nur auf unbegrenztem Netz, ohne Wakelock | etwa 1 s Arbeit pro Lauf |
-| Schnelleinstellungs-Kachel „YT DLNA“ | Suche beim Antippen, zeigt Sessions | nur bei Nutzung |
+| Auslöser | Was passiert |
+|---|---|
+| App-Start | Der periodische Job wird geplant und der WLAN-Auslöser angemeldet (beides bleibt bis zum Neustart des Handys oder einem erzwungenen Beenden der App) |
+| Handy verbindet sich mit einem unbegrenzten WLAN | `ConnectivityManager.registerNetworkCallback` mit `PendingIntent` weckt einen Empfänger, der einen einmaligen Job plant (5 s Wartezeit, damit das Netz steht) |
+| Periodisch | `JobScheduler`, alle 20 min (Spielraum 10 min), nur auf unbegrenztem Netz, ohne Wakelock; im Tiefschlaf verschiebt Android ihn ins nächste Wartungsfenster |
 
-- Der periodische Job und die Benachrichtigung sind abschaltbar (Standard: aus); der WLAN-Auslöser
-  ist an.
-- **„Auch wenn die App nicht läuft“:** Das geht über `JobScheduler` und den Netzwerk-`PendingIntent`.
-  Beide starten den App-Prozess kurz. Unser Patch kann dafür einen eigenen `JobService` und ein
-  eigenes Kachel-Service im Manifest ergänzen. **Risiko:** Jeder Start lädt die
-  `Application`-Klasse von YouTube mit. Läuft unser Job in einem eigenen Prozess
-  (`android:process=":ytdlna"`), lädt Android dort zwar ebenfalls YouTubes `Application`; YouTube
-  initialisiert in Nebenprozessen aber meist wenig. Das muss gemessen werden, bevor der
-  periodische Job standardmäßig angeht.
-- **Ist eine Session gefunden,** zeigt das Handy eine Benachrichtigung mit Medien-Steuerung (eine
-  eigene `MediaSession`), solange die Session lebt. Abgefragt wird dann per Long-Polling nur
-  während eine Ansicht offen ist, sonst alle 60 s. Endet die Session, verschwindet die
-  Benachrichtigung.
+- **Eigener Prozess `:ytdlna`:** Job und Empfänger laufen dort. Der Patch ändert die
+  Basisklasse der `Application` von YouTube Music so, dass in diesem Prozess `attachBaseContext`
+  nur den Kontext setzt und `onCreate` sofort zurückkehrt. Dort läuft also nichts von YouTube Music
+  (keine Anmeldung, keine Bibliotheken), nur unser Code; Morphes eigener Einstiegs-Hook setzt
+  dabei lediglich seinen Kontext.
+- **Ein Lauf:** SSDP-Suche nach Renderern (2,5 s, Multicast-Lock nur währenddessen), dazu die per
+  Adresse hinzugefügten Geräte. Ein Renderer, dessen aktueller Titel unsere Metadaten trägt
+  (Eintrag `ytdlna-…` oder `urn:ytdlna-org`) und der spielt oder pausiert, ist eine Session.
+  Gefunden: Benachrichtigung „Läuft auf <Renderer>“ mit dem Titel (Kanal „DLNA-Sessions“, leise),
+  ein Tipp öffnet YouTube Music. Keine Session: die Benachrichtigung verschwindet. Castet dieses
+  Handy selbst, wird nichts angezeigt.
+- **Gemessen im Emulator:** ein Lauf etwa 2,5 s (die Suche), 10 bis 40 ms CPU-Zeit für die Suche,
+  rund 70 ms CPU-Zeit für den ganzen Prozess inklusive Start. Bei drei Läufen pro Stunde sind
+  das wenige Sekunden CPU-Zeit am Tag.
+- **Nicht umgesetzt:** Start nach einem Neustart des Handys (bräuchte
+  `RECEIVE_BOOT_COMPLETED`; bis zum ersten Öffnen von YouTube Music ruht die Suche), Kachel in den
+  Schnelleinstellungen, Medien-Steuerung in der Benachrichtigung (kommt mit der Fernbedienung).
 
 ## Mehrere Renderer (wie eine Sonos-Gruppe)
 

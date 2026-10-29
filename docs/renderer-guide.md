@@ -87,9 +87,11 @@ Alle Zeiten in Sekunden, bezogen auf die Position, die der Renderer selbst melde
   Spätestens 15 s nach dem Titelstart ist `complete` `true`.
 - Auch danach kann sich das Dokument noch ändern (eine spät gefundene Untertitel-Sprache);
   gelegentliches Nachfragen, etwa alle 30 s, schadet nicht.
-- `404` heißt: das Handy spielt den Titel noch nicht. Das betrifft Titel der Warteschlange
-  (OpenHome-Playlist, nächster Titel bei AVTransport). Sobald der Renderer den Titel spielt,
-  folgt das Handy und liefert das Dokument; bis dahin nach ein paar Sekunden erneut versuchen.
+- `"complete": false` heißt auch: Das Handy spielt den Titel noch nicht (Titel der
+  Warteschlange: OpenHome-Playlist, nächster Titel bei AVTransport). Das Dokument ist dann leer;
+  der Renderer fragt wie sonst nach (alle 2 bis 3 s mit `If-None-Match`). Sobald der Renderer den
+  Titel spielt, folgt das Handy und füllt es.
+- `404` nur, wenn das Handy den Titel gar nicht kennt.
 
 ## 4. SponsorBlock-Abschnitte (`segments`)
 
