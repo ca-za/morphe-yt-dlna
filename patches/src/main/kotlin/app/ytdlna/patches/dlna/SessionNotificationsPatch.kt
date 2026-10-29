@@ -10,6 +10,7 @@ import org.w3c.dom.Element
 private const val SESSION_WATCH = "Lapp/ytdlna/extension/SessionWatch;"
 private const val JOB_SERVICE = "app.ytdlna.extension.SessionWatch\$Job"
 private const val NETWORK_RECEIVER = "app.ytdlna.extension.SessionWatch\$NetworkReceiver"
+private const val BOOT_RECEIVER = "app.ytdlna.extension.SessionWatch\$BootReceiver"
 
 /** The job's own process: the app's start-up is skipped there. */
 private const val PROCESS = ":ytdlna"
@@ -18,6 +19,8 @@ private val SESSION_PERMISSIONS = listOf(
     "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.CHANGE_WIFI_MULTICAST_STATE",
     "android.permission.POST_NOTIFICATIONS",
+    // The search resumes after a reboot without opening the app.
+    "android.permission.RECEIVE_BOOT_COMPLETED",
 )
 
 /** The app's Application class (from the manifest), for the bytecode part. */
@@ -51,6 +54,20 @@ private val sessionManifestPatch = resourcePatch {
                     setAttribute("android:exported", "false")
                 }
             )
+            // Only the system sends these (protected broadcasts), so exported is safe.
+            application.appendChild(
+                doc.createElement("receiver").apply {
+                    setAttribute("android:name", BOOT_RECEIVER)
+                    setAttribute("android:process", PROCESS)
+                    setAttribute("android:exported", "true")
+                    appendChild(doc.createElement("intent-filter").apply {
+                        listOf("android.intent.action.BOOT_COMPLETED", "android.intent.action.MY_PACKAGE_REPLACED")
+                            .forEach { action ->
+                                appendChild(doc.createElement("action").apply { setAttribute("android:name", action) })
+                            }
+                    })
+                }
+            )
         }
     }
 }
@@ -61,7 +78,7 @@ val dlnaSessionNotificationsPatch = bytecodePatch(
     description = "Shows a notification when a DLNA renderer in the Wi-Fi plays a title cast with the " +
         "\"DLNA cast\" patch from any phone (\"Playing on <device>\"). Searches briefly when the phone " +
         "joins an unmetered network and about every 20 minutes on one, in a separate lightweight " +
-        "process; nothing runs in between.",
+        "process; nothing runs in between. Resumes after a reboot without opening the app.",
     default = false
 ) {
     compatibleWith(COMPATIBILITY_YOUTUBE_MUSIC)

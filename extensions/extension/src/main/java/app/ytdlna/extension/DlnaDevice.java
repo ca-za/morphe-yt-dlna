@@ -17,6 +17,10 @@ final class DlnaDevice {
     String friendlyName = "";
     /** From the device description, for maker-specific features (Samsung captions). */
     String manufacturer = "";
+    /** Model, for the device list ("SYMFONISK Bookshelf"); may be empty. */
+    String modelName = "";
+    /** Sonos: the room the user named in the Sonos app ("Kitchen"). */
+    private String roomName = "";
     String udn = "";
     String avTransportType = AV_TRANSPORT + "1";
     String avTransportControlUrl;
@@ -134,6 +138,12 @@ final class DlnaDevice {
                         case "friendlyName":
                             if (deviceDepth == 1 && friendlyName.isEmpty()) friendlyName = value;
                             break;
+                        case "modelName":
+                            if (deviceDepth == 1 && modelName.isEmpty()) modelName = value;
+                            break;
+                        case "roomName":
+                            if (deviceDepth == 1 && roomName.isEmpty()) roomName = value;
+                            break;
                         case "manufacturer":
                             if (deviceDepth == 1 && manufacturer.isEmpty()) manufacturer = value;
                             break;
@@ -199,7 +209,30 @@ final class DlnaDevice {
                     break;
             }
         }
+        friendlyName = displayName(friendlyName, roomName);
         if (friendlyName.isEmpty()) friendlyName = host();
+    }
+
+    /** "192.168.1.5 - Sonos One - RINCON_…" style names: the address and the ID are noise. */
+    private static final java.util.regex.Pattern ADDRESS_PREFIX =
+            java.util.regex.Pattern.compile("^\\d{1,3}(\\.\\d{1,3}){3}\\s+-\\s+");
+    private static final java.util.regex.Pattern ID_SUFFIX =
+            java.util.regex.Pattern.compile("\\s+-\\s+RINCON_[0-9A-Fa-f]+.*$");
+
+    /**
+     * The name to show, as BubbleUPnP does: the room for Sonos (its friendly name is
+     * "address - model - ID"), else the friendly name without an address prefix or Sonos ID.
+     */
+    static String displayName(String friendlyName, String roomName) {
+        if (roomName != null && !roomName.trim().isEmpty()) return roomName.trim();
+        String name = ID_SUFFIX.matcher(friendlyName).replaceFirst("");
+        name = ADDRESS_PREFIX.matcher(name).replaceFirst("");
+        return name.trim();
+    }
+
+    /** The model, if it says more than the name (for the subtitle in the device list). */
+    String model() {
+        return modelName.isEmpty() || friendlyName.contains(modelName) ? "" : modelName;
     }
 
     private static String localName(String name) {

@@ -340,7 +340,8 @@ public final class DlnaCast {
                 boolean connected = session != null && session.device.location.equals(device.location);
                 String location = manualLocation(device, manual, manualByKey);
                 String subtitle = connected ? t("Verbunden", "Connected")
-                        : "DLNA · " + (location != null ? t("manuell · ", "manual · ") : "") + device.host();
+                        : "DLNA · " + (device.model().isEmpty() ? "" : device.model() + " · ")
+                        + (location != null ? t("manuell · ", "manual · ") : "") + device.host();
                 rows.add(new DevicePicker.Row(DevicePicker.Icon.TV, device.friendlyName, subtitle,
                         choose.apply(() -> cast(activity, device, current)),
                         location == null ? null : () -> remove.accept(location)));

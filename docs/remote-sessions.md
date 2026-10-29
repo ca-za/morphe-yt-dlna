@@ -126,7 +126,8 @@ Deshalb ereignisgesteuert, in einem eigenen leichten Prozess:
 
 | Auslöser | Was passiert |
 |---|---|
-| App-Start | Der periodische Job wird geplant und der WLAN-Auslöser angemeldet (beides bleibt bis zum Neustart des Handys oder einem erzwungenen Beenden der App) |
+| App-Start | Der periodische Job wird geplant und der WLAN-Auslöser angemeldet (bleibt bis zu einem erzwungenen Beenden der App) |
+| Neustart des Handys, App-Update | Ein Empfänger für `BOOT_COMPLETED` und `MY_PACKAGE_REPLACED` (im Prozess `:ytdlna`, Berechtigung `RECEIVE_BOOT_COMPLETED`) plant den Job neu und meldet den WLAN-Auslöser wieder an, ohne dass YouTube Music geöffnet wird |
 | Handy verbindet sich mit einem unbegrenzten WLAN | `ConnectivityManager.registerNetworkCallback` mit `PendingIntent` weckt einen Empfänger, der einen einmaligen Job plant (5 s Wartezeit, damit das Netz steht) |
 | Periodisch | `JobScheduler`, alle 20 min (Spielraum 10 min), nur auf unbegrenztem Netz, ohne Wakelock; im Tiefschlaf verschiebt Android ihn ins nächste Wartungsfenster |
 
@@ -144,9 +145,7 @@ Deshalb ereignisgesteuert, in einem eigenen leichten Prozess:
 - **Gemessen im Emulator:** ein Lauf etwa 2,5 s (die Suche), 10 bis 40 ms CPU-Zeit für die Suche,
   rund 70 ms CPU-Zeit für den ganzen Prozess inklusive Start. Bei drei Läufen pro Stunde sind
   das wenige Sekunden CPU-Zeit am Tag.
-- **Nicht umgesetzt:** Start nach einem Neustart des Handys (bräuchte
-  `RECEIVE_BOOT_COMPLETED`; bis zum ersten Öffnen von YouTube Music ruht die Suche), Kachel in den
-  Schnelleinstellungen, Medien-Steuerung in der Benachrichtigung (kommt mit der Fernbedienung).
+- **Nicht umgesetzt:** Kachel in den Schnelleinstellungen, Medien-Steuerung in der Benachrichtigung (kommt mit der Fernbedienung).
 
 ## Mehrere Renderer (wie eine Sonos-Gruppe)
 

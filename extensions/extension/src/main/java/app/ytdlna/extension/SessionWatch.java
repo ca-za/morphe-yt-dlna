@@ -105,6 +105,8 @@ public final class SessionWatch {
                 scheduler.schedule(new JobInfo.Builder(JOB_PERIODIC, job)
                         .setRequiredNetworkType(JobInfo.NETWORK_TYPE_UNMETERED)
                         .setPeriodic(PERIOD_MS, FLEX_MS)
+                        // Kept over a reboot (the patch adds RECEIVE_BOOT_COMPLETED).
+                        .setPersisted(persistable(app))
                         .build());
                 Log.i("Session search scheduled every " + PERIOD_MS / 60_000 + " min on Wi-Fi");
             }
@@ -114,6 +116,11 @@ public final class SessionWatch {
         } catch (Throwable t) {
             Log.d("Session search not scheduled: " + t);
         }
+    }
+
+    private static boolean persistable(Context app) {
+        return app.checkSelfPermission("android.permission.RECEIVE_BOOT_COMPLETED")
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
     }
 
     /** Wakes the job's process when the phone joins an unmetered network (also right away once). */
@@ -186,6 +193,21 @@ public final class SessionWatch {
             } catch (Throwable t) {
                 Log.d("Session search not started: " + t);
             }
+        }
+    }
+
+    /**
+     * After a reboot or an app update: schedules the job again and renews the Wi-Fi trigger
+     * (which does not survive either), without opening the app. Runs in the job's own process.
+     */
+    public static final class BootReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent == null ? null : intent.getAction();
+            if (!Intent.ACTION_BOOT_COMPLETED.equals(action)
+                    && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) return;
+            Log.i("Session search: renewing after " + action);
+            schedule(context);
         }
     }
 
