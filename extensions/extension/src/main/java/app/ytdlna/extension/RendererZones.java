@@ -144,6 +144,8 @@ final class RendererZones implements RoomsSheet.Source {
     // region Rooms dialog
 
     private boolean first = true;
+    /** Rooms muted in the last snapshot: the slider unmutes them. */
+    private final java.util.Set<String> muted = java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     @Override
     public List<RoomsSheet.Room> load() throws Exception {
@@ -152,10 +154,13 @@ final class RendererZones implements RoomsSheet.Source {
         first = false;
         if (s == null) s = cached(device);
         List<RoomsSheet.Room> rooms = new ArrayList<>();
+        muted.clear();
         for (Zone z : s.zones) {
+            if (z.mute) muted.add(z.id);
             String state = z.active ? DlnaCast.t("Spielt mit", "Plays along")
                     : z.busy ? DlnaCast.t("Spielt gerade etwas anderes", "Playing something else")
                     : DlnaCast.t("Tippen zum Hinzufügen", "Tap to add");
+            if (z.mute) state += DlnaCast.t(" · stumm", " · muted");
             // A room busy with another source is not taken away from it.
             rooms.add(new RoomsSheet.Room(z.id, z.name, z.active, !z.active && z.busy, state, z.volume));
         }
@@ -191,6 +196,11 @@ final class RendererZones implements RoomsSheet.Source {
 
     @Override
     public void setVolume(RoomsSheet.Room room, int volume) throws Exception {
+        // Moving the slider means "I want to hear it".
+        if (muted.remove(room.id)) {
+            DlnaController.soap(device.zonesUrl, device.zonesType, "SetZoneMute",
+                    "<ZoneId>" + escape(room.id) + "</ZoneId><Mute>0</Mute>");
+        }
         DlnaController.soap(device.zonesUrl, device.zonesType, "SetZoneVolume",
                 "<ZoneId>" + escape(room.id) + "</ZoneId><Volume>" + Math.max(0, Math.min(100, volume)) + "</Volume>");
     }
@@ -198,6 +208,28 @@ final class RendererZones implements RoomsSheet.Source {
     @Override
     public long pollMs() {
         return 2500;
+    }
+
+    private static final Pattern FAULT = Pattern.compile("HTTP \\d+ (\\d+)");
+
+    /** The renderer's UPnP error code in a failed call, or -1. */
+    static int faultCode(Exception e) {
+        Matcher m = FAULT.matcher(String.valueOf(e.getMessage()));
+        return m.find() ? Integer.parseInt(m.group(1)) : -1;
+    }
+
+    @Override
+    public String errorText(Exception e) {
+        switch (faultCode(e)) {
+            case 701:
+                return DlnaCast.t("Diesen Raum gibt es nicht mehr", "This room is gone");
+            case 702:
+                return DlnaCast.t("Der Raum spielt gerade etwas anderes", "The room is playing something else");
+            case 704:
+                return DlnaCast.t("Der Lautsprecher antwortet nicht", "The speaker does not answer");
+            default:
+                return RoomsSheet.Source.super.errorText(e);
+        }
     }
 
     private static String escape(String s) {

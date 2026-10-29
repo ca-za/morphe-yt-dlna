@@ -160,6 +160,7 @@ Renderer.
 | `GetZones(SinceVersion)` → `Zones` (JSON), `Version` | Räume, Zustand; leeres `Zones`, wenn sich seit `SinceVersion` nichts geändert hat. Die App fragt bei offenem Dialog alle 2,5 s |
 | `SetZoneActive(ZoneId, Active)` | Raum dazu oder weg |
 | `SetZoneVolume(ZoneId, Volume)` | Lautstärke eines Raums (0–100) |
+| `SetZoneMute(ZoneId, Mute)` | Stummschaltung; die App hebt sie auf, wenn man den Regler eines stummen Raums bewegt |
 
 `Zones`:
 
@@ -172,6 +173,9 @@ Renderer.
 - `id` ist die RINCON-UUID des Sonos. Gruppen, deren Räume beim Renderer `active` sind, zeigt
   die App nicht mehr als eigene Sonos-Zeile (ein direkter Cast nähme sie dem Fernseher weg).
 - `busy`: Der Raum spielt gerade etwas anderes; die App bietet ihn nicht zum Hinzufügen an.
+- Fehler: 701 (Raum gibt es nicht), 702 (Raum spielt etwas anderes), 704 (Lautsprecher
+  antwortet nicht) zeigt die App als Hinweis; bei 703 (kein Raum aktiv) regeln die
+  Lautstärketasten wieder den Renderer selbst.
 - `sync.state` (`measuring`, `locked`, `lost`) erscheint als Hinweis über den Räumen.
 - Hat der Renderer `GroupRenderingControl:1` und spielen Räume mit, regeln die Lautstärketasten
   die Gruppenlautstärke (wie bei einer Sonos-Gruppe).

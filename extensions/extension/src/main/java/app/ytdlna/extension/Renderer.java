@@ -131,15 +131,33 @@ abstract class Renderer {
 
     /** Master volume; for a Sonos group, the group's (all rooms together). */
     int volume() throws Exception {
-        // Sonos group, or a renderer feeding rooms (same GroupRenderingControl actions).
-        if (Sonos.leadsGroup(device) || RendererZones.leadsRooms(device)) return Sonos.groupVolume(device);
+        if (Sonos.leadsGroup(device)) return Sonos.groupVolume(device);
+        // A renderer feeding rooms: their volume (same actions as a Sonos group). The rooms may
+        // have changed since (the cheap GetZones tells); without rooms, the renderer's own.
+        if (RendererZones.has(device)) {
+            try {
+                RendererZones.refresh(device);
+                if (RendererZones.leadsRooms(device)) return Sonos.groupVolume(device);
+            } catch (Exception e) {
+                Log.d("Rooms volume not read, the renderer's instead: " + e.getMessage());
+            }
+        }
         return DlnaController.volume(device);
     }
 
     void setVolume(int volume) throws Exception {
-        if (Sonos.leadsGroup(device) || RendererZones.leadsRooms(device)) {
+        if (Sonos.leadsGroup(device)) {
             Sonos.setGroupVolume(device, volume);
             return;
+        }
+        if (RendererZones.leadsRooms(device)) {
+            try {
+                Sonos.setGroupVolume(device, volume);
+                return;
+            } catch (Exception e) {
+                // 703: no room plays along any more.
+                Log.d("Rooms volume not set, the renderer's instead: " + e.getMessage());
+            }
         }
         DlnaController.setVolume(device, volume);
     }

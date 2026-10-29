@@ -72,6 +72,11 @@ final class RoomsSheet {
 
         /** How often the dialog asks again while open; 0: only after a change. */
         long pollMs();
+
+        /** The message for a failed change. */
+        default String errorText(Exception e) {
+            return DlnaCast.t("Raum konnte nicht geändert werden", "Could not change the room");
+        }
     }
 
     private RoomsSheet() {
@@ -173,8 +178,8 @@ final class RoomsSheet {
                         Log.i("Rooms: " + r.name + (join ? " added" : " removed"));
                     } catch (Exception e) {
                         Log.d("Room change failed: " + e);
-                        main.post(() -> Toast.makeText(activity.getApplicationContext(),
-                                DlnaCast.t("Raum konnte nicht geändert werden", "Could not change the room"),
+                        String text = source.errorText(e);
+                        main.post(() -> Toast.makeText(activity.getApplicationContext(), text,
                                 Toast.LENGTH_SHORT).show());
                     }
                     main.post(reload);

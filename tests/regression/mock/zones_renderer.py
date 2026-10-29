@@ -17,14 +17,14 @@ state = {
     "version": 1,
     "outputDelayMs": 0,
     "groupVolume": 20,
-    "sync": {"state": "idle"},
+    "sync": {"state": "idle", "headStartMs": 500},
     "zones": [
-        {"id": "RINCON_MOCK00000000001400", "name": "Mock Küche", "ip": "192.0.2.10", "model": "S33",
+        {"id": "RINCON_MOCK00000000001400", "name": "Mock Küche", "ip": "192.0.2.10", "model": "Bookshelf",
          "group": "RINCON_MOCK00000000001400", "coordinator": False, "active": False, "busy": False,
          "volume": 15, "mute": False},
         {"id": "RINCON_MOCK00000000002400", "name": "Mock Bad", "ip": "192.0.2.11", "model": "S33",
          "group": "RINCON_MOCK00000000002400", "coordinator": False, "active": False, "busy": False,
-         "volume": 30, "mute": False},
+         "volume": 30, "mute": True},
         {"id": "RINCON_MOCK00000000003400", "name": "Mock Büro", "ip": "192.0.2.12", "model": "S33",
          "group": "RINCON_MOCK00000000003400", "coordinator": False, "active": False, "busy": True,
          "volume": 10, "mute": False},
@@ -76,8 +76,9 @@ def relayout():
         lead["coordinator"] = True
         for z in active:
             z["group"] = lead["id"]
-    state["sync"] = {"state": "locked" if active else "idle", "coordinator": active[0]["id"] if active else "",
-                     "offsetMs": 1.8, "jitterMs": 4.0}
+    state["sync"] = ({"state": "locked", "coordinator": active[0]["id"], "offsetMs": 2, "jitterMs": 4,
+                      "driftPpm": 7, "headStartMs": 500, "reserveMs": 1030, "underruns": 0}
+                     if active else {"state": "idle", "headStartMs": 500})
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -111,18 +112,27 @@ class Handler(BaseHTTPRequestHandler):
             z = zone(arg(body, "ZoneId"))
             active = arg(body, "Active") in ("1", "true")
             if z is None:
-                return self.fault(800, "No such zone")
+                return self.fault(701, "No such room")
             if active and z["busy"]:
-                return self.fault(801, "Zone busy")
+                return self.fault(702, "Room busy")
             z["active"] = active
             relayout()
             bump()
         elif action == "SetZoneVolume":
             z = zone(arg(body, "ZoneId"))
             if z is None:
-                return self.fault(800, "No such zone")
+                return self.fault(701, "No such room")
             z["volume"] = int(arg(body, "Volume"))
             bump()
+        elif action == "SetZoneMute":
+            z = zone(arg(body, "ZoneId"))
+            if z is None:
+                return self.fault(701, "No such room")
+            z["mute"] = arg(body, "Mute").lower() in ("1", "true", "yes")
+            bump()
+        elif action in ("GetGroupVolume", "SetGroupVolume", "SnapshotGroupVolume") and \
+                not any(z["active"] for z in state["zones"]):
+            return self.fault(703, "No room active")
         elif action == "GetGroupVolume":
             out = f"<CurrentVolume>{state['groupVolume']}</CurrentVolume>"
         elif action == "SetGroupVolume":
