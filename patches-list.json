@@ -1,6 +1,6 @@
 {
   "NOTE": "Do NOT manually edit this file. This file is automatically updated when semantic release (release.yml) runs. Manually editing this file can break your releases and break third party tools that use this file.",
-  "version": "0.1.2-alpha",
+  "version": "0.1.3-alpha",
   "patches": [
     {
       "name": "DLNA cast",
@@ -114,7 +114,7 @@
     },
     {
       "name": "DLNA session notifications",
-      "description": "Shows a notification when a DLNA renderer in the Wi-Fi plays a title cast with the \"DLNA cast\" patch from any phone (\"Playing on <device>\"). Searches briefly when the phone joins an unmetered network and about every 20 minutes on one, in a separate lightweight process; nothing runs in between.",
+      "description": "Shows a notification when a DLNA renderer in the Wi-Fi plays a title cast with the \"DLNA cast\" patch from any phone (\"Playing on <device>\"). Searches briefly when the phone joins an unmetered network and about every 20 minutes on one, in a separate lightweight process; nothing runs in between. Resumes after a reboot without opening the app.",
       "default": false,
       "category": null,
       "compatiblePackages": [

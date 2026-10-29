@@ -1,3 +1,9 @@
+## [0.1.3-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.2-alpha...v0.1.3-alpha) (2026-10-29)
+
+### ✨ New Features
+
+* Sonos room names in the device list; session search resumes after a reboot ([28375bf](https://github.com/ca-za/morphe-yt-dlna/commit/28375bf4782ef558b2ba82e8822348d5b3a9b1a0))
+
 ## [0.1.2-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.1-alpha...v0.1.2-alpha) (2026-10-29)
 
 ### ✨ New Features

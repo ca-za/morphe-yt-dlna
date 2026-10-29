@@ -56,7 +56,7 @@ In Morphe's settings, under Player:
 - With album covers on, YouTube Music sends title and artist to Deezer / iTunes.
 
 <!-- PATCHES_START EXPANDED -->
-> **[v0.1.2-alpha](https://github.com/ca-za/morphe-yt-dlna/releases/tag/v0.1.2-alpha)**&nbsp;&nbsp;•&nbsp;&nbsp;`dev`&nbsp;&nbsp;•&nbsp;&nbsp;3 patches total
+> **[v0.1.3-alpha](https://github.com/ca-za/morphe-yt-dlna/releases/tag/v0.1.3-alpha)**&nbsp;&nbsp;•&nbsp;&nbsp;`dev`&nbsp;&nbsp;•&nbsp;&nbsp;3 patches total
 <details open>
 <summary>📦 YouTube&nbsp;&nbsp;•&nbsp;&nbsp;1 patch</summary>
 <br>
@@ -84,7 +84,7 @@ In Morphe's settings, under Player:
 | 💊&nbsp;Patch | 📜&nbsp;Description | ⚙️&nbsp;Options |
 |----------|----------------|-----------|
 | [DLNA cast](#dlna-cast) | Adds DLNA / UPnP casting to the cast button. Streams the current video or song to a DLNA media renderer on the local network. Requires the official Morphe patches (with GmsCore support). The cast button shows when a DLNA renderer is found; turn off Morphe's "Hide cast button" (on by default) to see it. Casting from the share menu works either way. | • Test hooks |
-| [DLNA session notifications](#dlna-session-notifications) | Shows a notification when a DLNA renderer in the Wi-Fi plays a title cast with the "DLNA cast" patch from any phone ("Playing on <device>"). Searches briefly when the phone joins an unmetered network and about every 20 minutes on one, in a separate lightweight process; nothing runs in between. |  |
+| [DLNA session notifications](#dlna-session-notifications) | Shows a notification when a DLNA renderer in the Wi-Fi plays a title cast with the "DLNA cast" patch from any phone ("Playing on <device>"). Searches briefly when the phone joins an unmetered network and about every 20 minutes on one, in a separate lightweight process; nothing runs in between. Resumes after a reboot without opening the app. |  |
 
 </details>
 
