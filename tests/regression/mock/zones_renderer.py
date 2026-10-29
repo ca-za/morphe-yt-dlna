@@ -16,6 +16,7 @@ ZONES = "urn:ytdlna-org:service:Zones:1"
 state = {
     "version": 1,
     "outputDelayMs": 0,
+    "lastEnd": "",
     "groupVolume": 20,
     "sync": {"state": "idle", "headStartMs": 500},
     "zones": [

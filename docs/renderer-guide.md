@@ -177,6 +177,8 @@ Renderer.
   antwortet nicht) zeigt die App als Hinweis; bei 703 (kein Raum aktiv) regeln die
   Lautstärketasten wieder den Renderer selbst.
 - `sync.state` (`measuring`, `locked`, `lost`) erscheint als Hinweis über den Räumen.
+- `lastEnd` (`stopped`, `taken`, `unreachable`, `length`): warum die Räume zuletzt von selbst
+  aufgehört haben mitzuspielen; die App zeigt es als Hinweis, solange kein Raum aktiv ist.
 - Hat der Renderer `GroupRenderingControl:1` und spielen Räume mit, regeln die Lautstärketasten
   die Gruppenlautstärke (wie bei einer Sonos-Gruppe).
 

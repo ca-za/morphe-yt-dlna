@@ -44,11 +44,14 @@ final class RendererZones implements RoomsSheet.Source {
         final List<Zone> zones;
         /** idle, measuring, locked, lost; "" if not told. */
         final String sync;
+        /** Why the rooms last stopped playing along by themselves: stopped, taken, unreachable, length; "". */
+        final String lastEnd;
 
-        Snapshot(long version, List<Zone> zones, String sync) {
+        Snapshot(long version, List<Zone> zones, String sync, String lastEnd) {
             this.version = version;
             this.zones = zones;
             this.sync = sync;
+            this.lastEnd = lastEnd;
         }
 
         int active() {
@@ -129,7 +132,7 @@ final class RendererZones implements RoomsSheet.Source {
         }
         JSONObject sync = o.optJSONObject("sync");
         return new Snapshot(o.optLong("version"), Collections.unmodifiableList(zones),
-                sync == null ? "" : sync.optString("state"));
+                sync == null ? "" : sync.optString("state"), o.optString("lastEnd"));
     }
 
     private static String unescape(String s) {
@@ -175,7 +178,26 @@ final class RendererZones implements RoomsSheet.Source {
     @Override
     public String note() {
         Snapshot s = cached(device);
-        if (s == null || s.active() == 0) return null;
+        if (s == null) return null;
+        if (s.active() == 0) {
+            // Why the rooms stopped playing along last time, if they did by themselves.
+            switch (s.lastEnd) {
+                case "stopped":
+                    return DlnaCast.t("Die Räume haben zuletzt aufgehört zu spielen",
+                            "The rooms stopped playing last time");
+                case "taken":
+                    return DlnaCast.t("Die Räume wurden zuletzt von einer anderen Quelle übernommen",
+                            "Another source took the rooms over last time");
+                case "unreachable":
+                    return DlnaCast.t("Die Räume haben den Fernseher zuletzt nicht erreicht",
+                            "The rooms could not reach the TV last time");
+                case "":
+                    return null;
+                default:
+                    return DlnaCast.t("Die Räume haben zuletzt aufgehört mitzuspielen",
+                            "The rooms stopped playing along last time");
+            }
+        }
         switch (s.sync) {
             case "measuring":
                 return DlnaCast.t("Räume werden synchronisiert…", "Syncing the rooms…");
