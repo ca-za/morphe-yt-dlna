@@ -1,9 +1,8 @@
 name: Open a PR to main
 
+# Started by hand when dev is ready for a stable release (main only gets those); on every
+# push it failed, as Actions may not open pull requests in this repository.
 on:
-  push:
-    branches:
-      - dev
   workflow_dispatch:
 
 permissions:
