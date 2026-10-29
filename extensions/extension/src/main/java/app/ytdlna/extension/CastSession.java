@@ -92,6 +92,9 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private volatile String loadingVideoId;
     /** The format the loaded title went to the renderer in (YouTube Music: song = audio only). */
     private volatile boolean loadedAudio;
+    /** The song whose switch to video waited for its music video already (main thread). */
+    private String artTrackWaited;
+    private static final long ART_TRACK_VIDEO_WAIT_MS = 4000;
     private volatile boolean stopped;
     private volatile String rendererState = "";
     /** The renderer's state before it started buffering (TRANSITIONING). */
@@ -333,7 +336,10 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     @Override
     public void onStreams(StreamInfo info) {
         if (local.isPassingThrough(info.videoId)) return;
-        if (info.videoId.equals(StreamCapture.currentVideoId())) {
+        // Also the title Morphe reports as playing: YouTube Music's switch from a song to its
+        // music video may not pass the player's usual load.
+        if (info.videoId.equals(StreamCapture.currentVideoId())
+                || (musicApp && info.videoId.equals(MorpheState.videoId()))) {
             load(info);
         } else {
             rendererThread.execute(() -> {
@@ -368,10 +374,28 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 Log.d("Renderer already has " + videoId + " as " + (audio ? "audio" : "video"));
                 return;
             }
+            Log.d("Mode " + (audio ? "song" : "video") + ": phone at " + current + ", Morphe at "
+                    + MorpheState.videoId() + ", renderer has " + loadedVideoId
+                    + (info.isArtTrack() ? " (a song: its picture is the cover)" : ""));
             if (!videoId.equals(loadedVideoId)) {
                 // Another title: it is loaded (in the new format) like any title change.
                 Log.d("Mode switched with the title change to " + videoId);
                 load(info);
+                return;
+            }
+            if (audio) artTrackWaited = null;
+            if (!audio && info.isArtTrack() && !videoId.equals(artTrackWaited)) {
+                // A song switched to video: the app moves on to its music video (another title)
+                // in a moment. Its picture would only be the cover: wait for the video first.
+                artTrackWaited = videoId;
+                main.postDelayed(() -> {
+                    if (stopped || audioOnly()) return;
+                    String now = StreamCapture.currentVideoId();
+                    if (videoId.equals(loadedVideoId) && videoId.equals(now) && !loadedAudio) return;
+                    if (!videoId.equals(now) && !videoId.equals(MorpheState.videoId())) return; // moved on
+                    Log.d("No music video for " + videoId + ", sending its cover as video");
+                    onMusicModeChanged(false);
+                }, ART_TRACK_VIDEO_WAIT_MS);
                 return;
             }
             Log.i("Switching the renderer to " + (audio ? "audio" : "video"));

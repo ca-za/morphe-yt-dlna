@@ -260,6 +260,20 @@ final class StreamInfo {
      * 360p one). With "Spoof video streams" the app often gets these first and the full ones a
      * moment later.
      */
+    /**
+     * A song's own title in YouTube Music ("art track"): its picture is only the cover (square
+     * video formats). Its music video, if there is one, is another title.
+     */
+    boolean isArtTrack() {
+        boolean video = false;
+        for (Format f : formats) {
+            if (!f.isVideoOnly() || f.height <= 0) continue;
+            video = true;
+            if (f.width != f.height) return false;
+        }
+        return video;
+    }
+
     boolean isSabrOnly() {
         if (isLive()) return false;
         for (Format f : formats) {
