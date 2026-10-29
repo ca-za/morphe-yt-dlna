@@ -1,3 +1,10 @@
+## [0.1.8-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.7-alpha...v0.1.8-alpha) (2026-10-29)
+
+### 🐛 Bug Fixes
+
+* YouTube Music: a song switched to video casts its music video, not the cover ([255eda1](https://github.com/ca-za/morphe-yt-dlna/commit/255eda1cc28b8d49718a75725e4d650fe081c488))
+* albums and playlists of songs: the playlist reaches the renderer, songs change cleanly ([6745d87](https://github.com/ca-za/morphe-yt-dlna/commit/6745d8764138648f139243c1d32c4cbfc8ea61e3))
+
 ## [0.1.7-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.6-alpha...v0.1.7-alpha) (2026-10-29)
 
 ### ✨ New Features
