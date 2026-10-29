@@ -1,3 +1,9 @@
+## [0.1.4-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.3-alpha...v0.1.4-alpha) (2026-10-29)
+
+### ✨ New Features
+
+* Sonos groups and rooms in the device list, group volume ([09224dd](https://github.com/ca-za/morphe-yt-dlna/commit/09224dd22c9dcecb1c425717e5d1149dd0efed9d))
+
 ## [0.1.3-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.2-alpha...v0.1.3-alpha) (2026-10-29)
 
 ### ✨ New Features
