@@ -1,3 +1,9 @@
+## [0.1.2-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.1-alpha...v0.1.2-alpha) (2026-10-29)
+
+### ✨ New Features
+
+* background session notifications for YouTube Music (own patch); extras for queued titles ([f284a7c](https://github.com/ca-za/morphe-yt-dlna/commit/f284a7c6d8cf437d05584941f6c46296cf258010))
+
 ## [0.1.1-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.0-alpha...v0.1.1-alpha) (2026-10-29)
 
 ### ✨ New Features
