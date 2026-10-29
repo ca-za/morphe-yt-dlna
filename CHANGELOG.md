@@ -1,3 +1,9 @@
+## [0.1.1-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.0-alpha...v0.1.1-alpha) (2026-10-29)
+
+### ✨ New Features
+
+* lyrics and audio language for the renderer, Spotify look, portrait while casting ([22356b4](https://github.com/ca-za/morphe-yt-dlna/commit/22356b45c15dea4a5e788b3ee3a74ac46c342573))
+
 ## 0.1.0-alpha (2026-10-28)
 
 First release with the new version numbering (formerly 1.0.0-alpha.1 to 1.0.0-alpha.9).
