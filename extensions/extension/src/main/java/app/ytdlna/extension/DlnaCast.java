@@ -341,6 +341,13 @@ public final class DlnaCast {
                 String name = device.friendlyName;
                 Runnable rooms = null;
                 Sonos.Group group = Sonos.is(device) ? Sonos.groupOf(device) : null;
+                // A renderer's room group (it streams to these Sonos): reached through the
+                // renderer, a direct cast would take the rooms from it.
+                if (group != null && RendererZones.ownsGroup(group.coordinator)) continue;
+                if (RendererZones.has(device)) {
+                    name = RendererZones.label(device);
+                    rooms = () -> RendererZones.show(activity, device, rebuildRef[0]);
+                }
                 if (group != null) {
                     String uuid = Sonos.uuid(device);
                     Sonos.Zone zone = Sonos.zone(Sonos.lastKnown(device), uuid);
@@ -415,6 +422,16 @@ public final class DlnaCast {
             if (!seen.add(deviceKey(device))) return;
             devices.add(device);
             rebuild.run();
+            if (RendererZones.has(device) && RendererZones.cached(device) == null) {
+                background.execute(() -> {
+                    try {
+                        RendererZones.refresh(device);
+                        main.post(rebuild);
+                    } catch (Exception e) {
+                        Log.d("Renderer rooms not read: " + e);
+                    }
+                });
+            }
             if (Sonos.is(device)) {
                 SonosRooms.known(device);
                 // Groups: read once per household (the answer covers all its players).

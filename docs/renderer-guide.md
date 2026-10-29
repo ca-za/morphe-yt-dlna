@@ -145,3 +145,35 @@ folgt dem Renderer.
 3. Das `<desc>` suchen, das Dokument holen und mit `ETag` nachfragen, bis `complete`.
 4. Abschnitte in der Zeitleiste zeigen, Lyrics oder Untertitel anzeigen, nicht selbst
    überspringen.
+
+## 8. Raumgruppe: Sonos-Räume über den Renderer (Entwurf)
+
+**Entwurf:** Die Renderer-Seite ist noch nicht gebaut; Details können sich ändern.
+
+Ein Renderer, der den Ton des Casts selbst an Sonos-Räume weitergibt, bietet auf seinem
+MediaRenderer-Gerät den Dienst `urn:ytdlna-org:service:Zones:1` an. Die App zeigt ihn dann wie
+eine Sonos-Gruppe: eine Zeile „Wohnzimmer TV + 2“ mit Räume-Knopf. Der Cast geht weiter an den
+Renderer.
+
+| Aktion | Zweck |
+|---|---|
+| `GetZones(SinceVersion)` → `Zones` (JSON), `Version` | Räume, Zustand; leeres `Zones`, wenn sich seit `SinceVersion` nichts geändert hat. Die App fragt bei offenem Dialog alle 2,5 s |
+| `SetZoneActive(ZoneId, Active)` | Raum dazu oder weg |
+| `SetZoneVolume(ZoneId, Volume)` | Lautstärke eines Raums (0–100) |
+
+`Zones`:
+
+```json
+{"version": 42, "sync": {"state": "locked"},
+ "zones": [{"id": "RINCON_…", "name": "Küche", "group": "RINCON_…", "coordinator": true,
+            "active": true, "busy": false, "volume": 20, "mute": false}]}
+```
+
+- `id` ist die RINCON-UUID des Sonos. Gruppen, deren Räume beim Renderer `active` sind, zeigt
+  die App nicht mehr als eigene Sonos-Zeile (ein direkter Cast nähme sie dem Fernseher weg).
+- `busy`: Der Raum spielt gerade etwas anderes; die App bietet ihn nicht zum Hinzufügen an.
+- `sync.state` (`measuring`, `locked`, `lost`) erscheint als Hinweis über den Räumen.
+- Hat der Renderer `GroupRenderingControl:1` und spielen Räume mit, regeln die Lautstärketasten
+  die Gruppenlautstärke (wie bei einer Sonos-Gruppe).
+
+Ein Mock zum Ausprobieren: `tests/regression/mock/zones_renderer.py`.

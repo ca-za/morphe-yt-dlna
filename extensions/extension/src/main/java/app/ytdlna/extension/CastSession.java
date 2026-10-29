@@ -915,7 +915,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         // Volume does not change the transport state: no echo to expect.
         onRenderer("Volume", null, r -> {
             // Sonos: rooms may join or leave the group, which changes its volume.
-            if (rendererVolume < 0 || Sonos.is(device)) rendererVolume = r.volume();
+            if (rendererVolume < 0 || Sonos.is(device) || RendererZones.has(device)) rendererVolume = r.volume();
             if (rendererVolume < 0) return;
             rendererVolume = Math.max(0, Math.min(100, rendererVolume + delta));
             r.setVolume(rendererVolume);

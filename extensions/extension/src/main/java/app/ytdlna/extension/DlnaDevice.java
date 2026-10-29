@@ -47,6 +47,10 @@ final class DlnaDevice {
     String groupRenderingControlType;
     String groupRenderingControlUrl;
 
+    // A renderer that feeds Sonos rooms itself (see RendererZones).
+    String zonesType;
+    String zonesUrl;
+
     boolean hasOpenHomePlaylist() {
         return playlistControlUrl != null;
     }
@@ -209,6 +213,9 @@ final class DlnaDevice {
                                         && timeControlUrl == null) {
                                     timeType = serviceType;
                                     timeControlUrl = absolute;
+                                } else if (serviceType.startsWith(RendererZones.SERVICE) && zonesUrl == null) {
+                                    zonesType = serviceType;
+                                    zonesUrl = absolute;
                                 } else if (serviceType.startsWith("urn:schemas-upnp-org:service:ZoneGroupTopology:")
                                         && zoneGroupTopologyUrl == null) {
                                     zoneGroupTopologyType = serviceType;
