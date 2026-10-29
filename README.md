@@ -24,6 +24,9 @@ add-on to the official [Morphe](https://morphe.software) patches.
   DLNA cover page, DLNA player controls, DLNA portrait lock, DLNA Sonos rooms, DLNA renderer
   extras. **DLNA session notifications** (YouTube Music, off by default) notices casts of other
   phones in the Wi-Fi and offers a remote control (media session).
+- **DLNA app icon** (off by default): YouTube as a screen, YouTube Music as a record with its
+  tonearm, each with cast waves; style "Night" or "Day". It also takes the place of the icons of
+  Morphe's "Custom branding". Drawn by `scripts/icons/generate.py`.
 
 ## Install
 
