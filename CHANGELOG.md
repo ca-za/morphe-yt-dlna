@@ -1,3 +1,10 @@
+## [0.1.7-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.6-alpha...v0.1.7-alpha) (2026-10-29)
+
+### ✨ New Features
+
+* chapters and loudness in the renderer extras ([64006b3](https://github.com/ca-za/morphe-yt-dlna/commit/64006b353f77d79091e41f1e97d7f2d80d7caafb))
+* rooms dialog tells why the renderer's rooms last stopped (lastEnd) ([e129be5](https://github.com/ca-za/morphe-yt-dlna/commit/e129be530f4af898a0fbeb6887952839eeef320a))
+
 ## [0.1.6-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.5-alpha...v0.1.6-alpha) (2026-10-29)
 
 ### ✨ New Features
