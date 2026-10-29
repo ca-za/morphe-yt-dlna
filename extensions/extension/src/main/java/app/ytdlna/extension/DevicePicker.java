@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  * the title with a spinner while searching, the devices and then the actions, each with an icon.
  */
 final class DevicePicker {
-    enum Icon {TV, CAST, ADD, STOP, LINK, DELETE, SHARE, ROOMS, NONE}
+    enum Icon {TV, CAST, ADD, STOP, LINK, DELETE, SHARE, ROOMS, CHECK, VOLUME, NONE}
 
     static final class Row {
         final Icon icon;
@@ -72,9 +72,12 @@ final class DevicePicker {
     private final Dialog dialog;
     private final LinearLayout rows;
     private final ProgressBar spinner;
-    private final boolean dark;
-    private final int textColor;
-    private final int secondaryColor;
+    private final TextView titleView;
+    final boolean dark;
+    final int textColor;
+    final int secondaryColor;
+    /** The sheet's background. */
+    final int surfaceColor;
 
     DevicePicker(Activity activity, String title, Runnable onDismiss) {
         this.activity = activity;
@@ -82,11 +85,12 @@ final class DevicePicker {
                 == Configuration.UI_MODE_NIGHT_YES;
         textColor = dark ? Color.WHITE : 0xFF0F0F0F;
         secondaryColor = dark ? 0xFFAAAAAA : 0xFF606060;
+        surfaceColor = dark ? 0xFF282828 : Color.WHITE;
 
         LinearLayout sheet = new LinearLayout(activity);
         sheet.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable background = new GradientDrawable();
-        background.setColor(dark ? 0xFF282828 : Color.WHITE);
+        background.setColor(surfaceColor);
         background.setCornerRadius(dp(28));
         sheet.setBackground(background);
         sheet.setPadding(0, 0, 0, dp(12));
@@ -104,7 +108,7 @@ final class DevicePicker {
         LinearLayout header = new LinearLayout(activity);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(24), dp(24), dp(24), dp(12));
-        TextView titleView = new TextView(activity);
+        titleView = new TextView(activity);
         titleView.setText(title);
         titleView.setTextColor(textColor);
         titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
@@ -146,6 +150,24 @@ final class DevicePicker {
 
     void setSearching(boolean searching) {
         spinner.setVisibility(searching ? View.VISIBLE : View.GONE);
+    }
+
+    void setTitle(String title) {
+        titleView.setText(title);
+    }
+
+    /** Own content instead of rows (for dialogs in the same look). */
+    void setViews(List<View> list) {
+        rows.removeAllViews();
+        for (View view : list) rows.addView(view);
+    }
+
+    boolean isShowing() {
+        return dialog.isShowing();
+    }
+
+    static Drawable icon(Icon icon, int color) {
+        return new IconDrawable(icon, color);
     }
 
     void setRows(List<Row> list) {
@@ -218,7 +240,7 @@ final class DevicePicker {
         return view;
     }
 
-    private int dp(int value) {
+    int dp(int value) {
         return Math.round(value * activity.getResources().getDisplayMetrics().density);
     }
 
@@ -245,6 +267,12 @@ final class DevicePicker {
                 // Material "tune".
                 return "M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7z"
                         + "m14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z";
+            case CHECK:
+                return "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
+            case VOLUME:
+                return "M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"
+                        + "M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77"
+                        + "s-2.99-7.86-7-8.77z";
             case SHARE:
                 return "M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7"
                         + "l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3"
