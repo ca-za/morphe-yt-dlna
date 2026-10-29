@@ -90,6 +90,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private volatile Renderer renderer;
     private volatile String loadedVideoId;
     private volatile String loadingVideoId;
+    /** The format the loaded title went to the renderer in (YouTube Music: song = audio only). */
+    private volatile boolean loadedAudio;
     private volatile boolean stopped;
     private volatile String rendererState = "";
     /** The renderer's state before it started buffering (TRANSITIONING). */
@@ -354,9 +356,24 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     @Override
     public void onMusicModeChanged(boolean audio) {
         main.post(() -> {
-            String videoId = loadedVideoId;
+            // The title the phone plays now: starting an album or playlist of songs switches to
+            // song mode together with the title (the last cast title is not the one to reload).
+            String current = StreamCapture.currentVideoId();
+            String videoId = current != null ? current : loadedVideoId;
             StreamInfo info = videoId == null ? null : StreamCapture.get(videoId);
             if (stopped || info == null) return;
+            // Loading now: checked once loaded (it reloads if it went in the other format).
+            if (videoId.equals(loadingVideoId)) return;
+            if (videoId.equals(loadedVideoId) && loadedAudio == audio) {
+                Log.d("Renderer already has " + videoId + " as " + (audio ? "audio" : "video"));
+                return;
+            }
+            if (!videoId.equals(loadedVideoId)) {
+                // Another title: it is loaded (in the new format) like any title change.
+                Log.d("Mode switched with the title change to " + videoId);
+                load(info);
+                return;
+            }
             Log.i("Switching the renderer to " + (audio ? "audio" : "video"));
             rendererThread.execute(() -> {
                 // The playlist entries carry their format, so the playlist is built again.
@@ -394,7 +411,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             Renderer r = renderer;
             try {
                 if (stopped || r == null) return;
-                StreamProxy.Media media = StreamProxy.choose(info, device, audioOnly());
+                boolean audio = audioOnly();
+                StreamProxy.Media media = StreamProxy.choose(info, device, audio);
                 if (media == null) {
                     toast(info.isLive()
                             ? DlnaCast.t("Livestreams braucht ein Gerät mit HLS", "Live streams need a device with HLS")
@@ -434,6 +452,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 rendererSettleUntil = SystemClock.elapsedRealtime() + RENDERER_LOAD_SETTLE_MS;
                 r.load(new Renderer.Load(info, media, track, art, queue));
                 loadedVideoId = info.videoId;
+                loadedAudio = audio;
                 // Checked once the load has settled (states before are ignored as its echo).
                 main.postDelayed(this::confirmState, RENDERER_LOAD_SETTLE_MS);
                 onQueue(queue);
@@ -448,6 +467,13 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 // The phone reports "paused" for a moment while switching titles, so only
                 // mirror a pause that is still there once the switch has settled.
                 main.postDelayed(() -> mirrorPauseAfterLoad(info.videoId), LOAD_SETTLE_MS);
+                // The app switched song/video while this title loaded (starting an album does):
+                // once more in the format it plays now.
+                if (musicApp && audio != audioOnly()) {
+                    Log.d("Mode changed while loading " + info.videoId + ", loading it again");
+                    boolean now = audioOnly();
+                    main.post(() -> onMusicModeChanged(now));
+                }
             } catch (Exception e) {
                 Log.e("Loading " + info.videoId + " failed", e);
                 toast(DlnaCast.t("Streamen fehlgeschlagen: ", "Cast failed: ") + e.getMessage());
