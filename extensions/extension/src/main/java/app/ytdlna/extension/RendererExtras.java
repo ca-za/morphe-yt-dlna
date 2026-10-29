@@ -98,12 +98,14 @@ final class RendererExtras {
                     .put("videoId", videoId)
                     .put("complete", complete)
                     .put("segments", segmentsJson(segments))
-                    .put("chapters", new JSONArray())
+                    .put("chapters", Chapters.json(videoId))
                     .put("captions", Captions.extrasJson(videoId, baseUrl, Captions.selected(videoId)))
                     .put("lyrics", lyrics != null && lyrics.hasLines() ? MusicLyrics.json(lyrics) : JSONObject.NULL)
                     // Who skips segments: so far always the phone (its seek reaches the renderer).
                     .put("skipBy", "phone");
             if (durationMs > 0) doc.put("duration", durationMs / 1000.0);
+            JSONObject audio = audioJson(videoId);
+            if (audio != null) doc.put("audio", audio);
             NativeProxy.nativePutText(path(videoId), MIME, doc.toString());
             published.add(videoId);
             Log.d("Extras for " + videoId + ": " + segments.size() + " segments"
@@ -113,6 +115,32 @@ final class RendererExtras {
             Log.e("Building the extras for " + videoId + " failed", e);
         }
         return complete;
+    }
+
+    /**
+     * The loudness of the audio the renderer gets, so it can play titles at an even level like
+     * the app does: YouTube turns a title down by loudnessDb when that is positive (never up).
+     */
+    private static JSONObject audioJson(String videoId) throws JSONException {
+        StreamInfo info = StreamCapture.get(videoId);
+        StreamInfo.Format audio = info == null ? null : StreamProxy.castAudio(info);
+        if ((audio == null || Float.isNaN(audio.loudnessDb)) && info != null) {
+            // Formats without a direct address carry the loudness too (all about the same).
+            for (StreamInfo.Format f : info.formats) {
+                if (f.isAudioOnly() && info.isPreferredAudio(f) && !Float.isNaN(f.loudnessDb)) {
+                    audio = f;
+                    break;
+                }
+            }
+        }
+        if (audio == null || Float.isNaN(audio.loudnessDb)) return null;
+        JSONObject out = new JSONObject().put("loudnessDb", round(audio.loudnessDb));
+        if (!Float.isNaN(audio.perceptualLoudnessDb)) out.put("perceptualLoudnessDb", round(audio.perceptualLoudnessDb));
+        return out.put("targetLufs", -14);
+    }
+
+    private static double round(float v) {
+        return Math.round(v * 100) / 100.0;
     }
 
     /** Morphe's segments with the renderer's action: skip, skip-once, manual, show, jump. */

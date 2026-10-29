@@ -23,6 +23,11 @@ final class StreamInfo {
         boolean audioDefault;
         /** A version with compressed dynamic range ("stable volume"). */
         boolean drc;
+        /**
+         * Loudness against YouTube's reference (dB; positive = louder, YouTube turns it down by
+         * that much), and the perceived loudness (LUFS-like, about 14 below). NaN if not given.
+         */
+        float loudnessDb = Float.NaN, perceptualLoudnessDb = Float.NaN;
 
         boolean isAudioOnly() {
             return mimeType.startsWith("audio/");
@@ -67,6 +72,8 @@ final class StreamInfo {
     static final int AT_ID = 5;
     static final int AT_DEFAULT = 6;
     private static final int F_DRC = 49;
+    private static final int F_LOUDNESS_DB = 47;
+    private static final int F_PERCEPTUAL_LOUDNESS_DB = 53;
 
     // StreamingData field numbers.
     private static final int SD_FORMATS = 2;
@@ -156,6 +163,11 @@ final class StreamInfo {
         return info;
     }
 
+    private static float float32(Proto.Field f) {
+        if (f == null || f.wireType != Proto.FIXED32 || f.data == null) return Float.NaN;
+        return java.nio.ByteBuffer.wrap(f.data).order(java.nio.ByteOrder.LITTLE_ENDIAN).getFloat();
+    }
+
     private static Format parseFormat(byte[] data, boolean adaptive) {
         List<Proto.Field> fields = Proto.parse(data);
         Format format = new Format();
@@ -185,6 +197,8 @@ final class StreamInfo {
             }
         }
         format.drc = Proto.varint(fields, F_DRC) != 0;
+        format.loudnessDb = float32(Proto.first(fields, F_LOUDNESS_DB));
+        format.perceptualLoudnessDb = float32(Proto.first(fields, F_PERCEPTUAL_LOUDNESS_DB));
         Proto.Field index = Proto.first(fields, F_INDEX_RANGE);
         if (index != null && index.wireType == Proto.BYTES) {
             List<Proto.Field> r = Proto.parse(index.data);

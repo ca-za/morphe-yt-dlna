@@ -59,7 +59,11 @@ Metadaten von OpenHome `Playlist.Insert` steht nach der Medien-Ressource:
     {"category": "selfpromo", "start": 658.2, "end": 723.74, "action": "manual"},
     {"category": "poi_highlight", "start": 626.19, "action": "jump"}
   ],
-  "chapters": [],
+  "chapters": [
+    {"title": "Intro", "start": 0.0, "end": 61.5},
+    {"title": "Teil 1", "start": 61.5, "end": 240.0}
+  ],
+  "audio": {"loudnessDb": -4.71, "perceptualLoudnessDb": -18.71, "targetLufs": -14},
   "captions": [
     {"language": "en", "label": "English", "auto": false, "lyrics": false, "default": true,
      "srt": "http://…/captions/3LopI4YeC4I.en.srt", "vtt": "http://…/captions/3LopI4YeC4I.en.vtt"},
@@ -92,6 +96,19 @@ Alle Zeiten in Sekunden, bezogen auf die Position, die der Renderer selbst melde
   der Renderer fragt wie sonst nach (alle 2 bis 3 s mit `If-None-Match`). Sobald der Renderer den
   Titel spielt, folgt das Handy und füllt es.
 - `404` nur, wenn das Handy den Titel gar nicht kennt.
+
+## 3a. Kapitel und Lautheit
+
+- `chapters` (YouTube): die Kapitel des Videos, Zeiten in Sekunden, `end` wenn bekannt. Sie
+  kommen meist ein, zwei Sekunden nach dem Titelstart (das Dokument wird dann neu
+  veröffentlicht); ohne Kapitel ist die Liste leer. Vorschlag: Kapitel in der Zeitleiste zeigen,
+  Weiter/Zurück auf der Fernbedienung springt zum nächsten oder vorigen Kapitel.
+- `audio`: die Lautheit des Tons, den der Renderer bekommt, wie YouTube sie für jedes Format
+  angibt. `loudnessDb` ist der Abstand zu YouTubes Bezugspegel (positiv = lauter). Die
+  YouTube-Apps senken einen Titel um `loudnessDb`, wenn der Wert positiv ist, und heben nie an;
+  ein Renderer kann es genauso machen (Verstärkung `min(0, −loudnessDb)` dB), so spielen Lieder
+  und Videos gleich laut. `perceptualLoudnessDb` ist die wahrgenommene Lautheit (etwa LUFS),
+  `targetLufs` YouTubes Ziel. Fehlt `audio`, ist nichts bekannt: nichts ändern.
 
 ## 4. SponsorBlock-Abschnitte (`segments`)
 

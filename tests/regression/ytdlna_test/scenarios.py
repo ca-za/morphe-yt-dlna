@@ -941,6 +941,12 @@ def renderer_extras(ctx: Context) -> Result:
             problems.append("document not complete after 25 s")
         elif not sponsor or abs(sponsor[0].get("start", 0) - SPONSOR_SEGMENT[0] / 1000) > 1:
             problems.append("sponsor segment missing")
+        # Loudness of the cast audio (YouTube gives it per format), for an even level.
+        audio = (body or {}).get("audio") or {}
+        evidence["audio"] = audio
+        if not isinstance(audio.get("loudnessDb"), (int, float)):
+            problems.append("no loudness in the extras")
+        evidence["chapters"] = len((body or {}).get("chapters", []))
         # Captions: an SRT resource for a renderer that lists text/srt, the tracks in the extras.
         lists_srt = "text/srt" in ctx.renderer.sink_protocols().lower()
         didl = ctx.renderer.didl()
@@ -997,28 +1003,26 @@ def sponsorblock(ctx: Context) -> Result:
     time.sleep(5)
     start, end = SPONSOR_SEGMENT
     ctx.control.local("seek", ms=str(start - 12_000))
-    time.sleep(35)
-    lines = ctx.logs.find_all(r"SponsorBlock|Phone seek to|Correcting phone", since)
-    tv = ctx.renderer.position_ms()
-    evidence.update({"lines": lines[-25:], "rendererAfter": tv})
-    skipped = [line for line in lines if "SponsorBlock skip on the phone" in line]
-    # The segment runs to the end of the video: the TV stops right after it. Where it was 3 s
-    # after the skip shows whether the skip arrived.
-    # Positions the TV reported after the skip (entering, leaving or 3 s after it); 0 once ended.
+    skip = ctx.logs.wait(r"SponsorBlock skip: .*sent to the TV", 35, since)
+    # The segment runs to the end of the video: right after the skip the TV is past it, or has
+    # already ended there.
     after = []
-    for line in lines:
-        m = re.search(r"SponsorBlock: TV (?:entered|left) \S+ \S+ \S+ \(\S+\) at (\d+) ms|"
-                      r"SponsorBlock: TV at (\d+) ms 3 s after", line)
-        if m:
-            after.append(int(m.group(1) or m.group(2)))
-    evidence["tvAfterSkip"] = after
+    if skip:
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            state = ctx.renderer.state()
+            position = ctx.renderer.position_ms()
+            after.append((state, position))
+            if state in ("STOPPED", "NO_MEDIA_PRESENT") or (position or 0) >= end - 1000:
+                break
+            time.sleep(1)
+    lines = ctx.logs.find_all(r"SponsorBlock|Phone seek to|Correcting phone", since)
+    evidence.update({"lines": lines[-25:], "tvAfterSkip": after})
+    past = any(st in ("STOPPED", "NO_MEDIA_PRESENT") or (pos or 0) >= end - 1000 for st, pos in after)
     problems = [p for p, bad in [
         ("no segments loaded", not segments),
-        ("no skip on the phone", not skipped),
-        ("skip not sent to the TV", skipped and "NOT sent" in skipped[0]),
-        # The segment runs to the end: a TV that ended right after the skip got past it too.
-        ("TV not past the segment", not any(p >= end - 1000 for p in after)
-         and not any("3 s after" in line and "state STOPPED" in line for line in lines))] if bad]
+        ("no skip sent to the TV", not skip),
+        ("TV not past the segment", skip and not past)] if bad]
     # Back to the test video for the scenarios after this one.
     if main_video:
         ctx.phone.sh(f"am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={main_video}' "

@@ -288,6 +288,12 @@ final class StreamProxy {
         return tracks;
     }
 
+    /** The audio the renderer gets (as in the DASH manifest and the audio-only stream). */
+    static StreamInfo.Format castAudio(StreamInfo info) {
+        StreamInfo.Format best = bestAudio(info, "audio/mp4");
+        return best != null ? best : bestAudio(info, "audio/webm");
+    }
+
     private static StreamInfo.Format bestAudio(StreamInfo info, String container) {
         StreamInfo.Format best = null;
         for (StreamInfo.Format f : info.formats) {

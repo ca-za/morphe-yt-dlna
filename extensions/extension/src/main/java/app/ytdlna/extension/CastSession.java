@@ -819,6 +819,11 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         main.postDelayed(this::watchExtras, EXTRAS_WATCH_MS);
         sponsorSegments();
         checkLyrics();
+        // Chapters come with the video's next response, after the title loaded.
+        String video = loadedVideoId;
+        if (video != null && Chapters.refresh(video) && RendererExtras.wanted(device)) {
+            RendererExtras.publish(video, extrasDurationMs, false);
+        }
     }
 
     // endregion
