@@ -305,6 +305,8 @@ public final class DlnaCast {
         // Keys found by a search, so they stay listed when their saved address is removed.
         Set<String> discovered = new HashSet<>();
         Runnable[] rebuildRef = new Runnable[1];
+        // The connected device's volume (Sonos: its group's), -1 until read or without control.
+        int[] volume = {-1};
         java.util.function.Consumer<String> remove = location -> {
             String name = location;
             for (DlnaDevice device : devices) {
@@ -334,6 +336,8 @@ public final class DlnaCast {
                     .show();
         };
         Runnable rebuild = () -> {
+            // Not while a slider is dragged: it would be replaced under the finger.
+            if (picker[0].dragging) return;
             List<DevicePicker.Row> rows = new ArrayList<>();
             CastSession session = CastSession.active();
             for (DlnaDevice device : devices) {
@@ -367,6 +371,13 @@ public final class DlnaCast {
                 rows.add(new DevicePicker.Row(DevicePicker.Icon.TV, name, subtitle,
                         choose.apply(() -> cast(activity, device, current)),
                         location == null ? null : () -> remove.accept(location), rooms));
+                if (connected && volume[0] >= 0) {
+                    CastSession playing = session;
+                    rows.add(DevicePicker.Row.volume(t("Lautstärke ", "Volume ") + name, volume[0], v -> {
+                        volume[0] = v;
+                        playing.setVolume(v);
+                    }));
+                }
             }
             for (String location : unreachable) {
                 rows.add(new DevicePicker.Row(DevicePicker.Icon.TV, hostOf(location),
@@ -417,6 +428,13 @@ public final class DlnaCast {
         rebuildRef[0] = rebuild;
         rebuild.run();
         picker[0].show();
+        CastSession playing = CastSession.active();
+        if (playing != null) {
+            playing.readVolume(v -> main.post(() -> {
+                volume[0] = v;
+                if (picker[0].isShowing()) rebuild.run();
+            }));
+        }
 
         DlnaDiscovery.Listener onDevice = device -> main.post(() -> {
             if (!seen.add(deviceKey(device))) return;

@@ -49,6 +49,9 @@ final class DevicePicker {
         final Runnable onDelete;
         /** Non-null: a rooms button at the end of the row (Sonos). */
         final Runnable onRooms;
+        /** Non-null: the row is a volume slider instead (value 0-100, set on release). */
+        final java.util.function.IntConsumer onVolume;
+        final int volume;
 
         Row(Icon icon, String text, String subtitle, Runnable onClick) {
             this(icon, text, subtitle, onClick, null);
@@ -60,12 +63,87 @@ final class DevicePicker {
 
         Row(Icon icon, String text, String subtitle, Runnable onClick, Runnable onDelete, Runnable onRooms) {
             this.onRooms = onRooms;
+            this.onVolume = null;
+            this.volume = -1;
             this.icon = icon;
             this.text = text;
             this.subtitle = subtitle;
             this.onClick = onClick;
             this.onDelete = onDelete;
         }
+
+        private Row(String description, int volume, java.util.function.IntConsumer onVolume) {
+            this.icon = Icon.VOLUME;
+            this.text = description;
+            this.subtitle = null;
+            this.onClick = null;
+            this.onDelete = null;
+            this.onRooms = null;
+            this.volume = volume;
+            this.onVolume = onVolume;
+        }
+
+        /** A volume slider; {@code description} is read by screen readers. */
+        static Row volume(String description, int volume, java.util.function.IntConsumer onVolume) {
+            return new Row(description, volume, onVolume);
+        }
+    }
+
+    /** Whether a slider is being dragged: the rows aren't rebuilt meanwhile. */
+    boolean dragging;
+
+    /**
+     * A volume slider in the sheet's colors (the app's theme may give old Holo sliders),
+     * {@code onSet} called when it's released.
+     */
+    android.widget.SeekBar slider(int value, String description, java.util.function.IntConsumer onSet) {
+        android.widget.SeekBar slider = new android.widget.SeekBar(activity);
+        slider.setMax(100);
+        slider.setProgress(value);
+        slider.setContentDescription(description);
+        slider.setPadding(dp(8), dp(8), dp(8), dp(8));
+        float radius = dp(2);
+        android.graphics.drawable.GradientDrawable rest = new android.graphics.drawable.GradientDrawable();
+        rest.setCornerRadius(radius);
+        rest.setColor(dark ? 0x40FFFFFF : 0x26000000);
+        android.graphics.drawable.GradientDrawable done = new android.graphics.drawable.GradientDrawable();
+        done.setCornerRadius(radius);
+        done.setColor(textColor);
+        android.graphics.drawable.LayerDrawable track = new android.graphics.drawable.LayerDrawable(
+                new Drawable[]{rest, new android.graphics.drawable.ClipDrawable(done, Gravity.START,
+                        android.graphics.drawable.ClipDrawable.HORIZONTAL)});
+        track.setId(0, android.R.id.background);
+        track.setId(1, android.R.id.progress);
+        for (int i = 0; i < 2; i++) {
+            track.setLayerHeight(i, dp(4));
+            track.setLayerGravity(i, Gravity.CENTER_VERTICAL);
+        }
+        slider.setProgressDrawable(track);
+        android.graphics.drawable.GradientDrawable thumb = new android.graphics.drawable.GradientDrawable();
+        thumb.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        thumb.setColor(textColor);
+        thumb.setSize(dp(16), dp(16));
+        slider.setThumb(thumb);
+        slider.setThumbOffset(dp(8));
+        slider.setSplitTrack(false);
+        slider.setMinimumHeight(dp(32));
+        slider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(android.widget.SeekBar bar, int progress, boolean fromUser) {
+            }
+
+            @Override
+            public void onStartTrackingTouch(android.widget.SeekBar bar) {
+                dragging = true;
+            }
+
+            @Override
+            public void onStopTrackingTouch(android.widget.SeekBar bar) {
+                dragging = false;
+                onSet.accept(bar.getProgress());
+            }
+        });
+        return slider;
     }
 
     private final Activity activity;
@@ -184,6 +262,21 @@ final class DevicePicker {
     }
 
     private View rowView(Row row) {
+        if (row.onVolume != null) {
+            // Under the connected device: speaker icon and slider, indented like a row's text.
+            LinearLayout view = new LinearLayout(activity);
+            view.setGravity(Gravity.CENTER_VERTICAL);
+            view.setMinimumHeight(dp(48));
+            view.setPadding(dp(24), 0, dp(24), dp(8));
+            ImageView icon = new ImageView(activity);
+            icon.setImageDrawable(new IconDrawable(Icon.VOLUME, secondaryColor));
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+            iconParams.rightMargin = dp(24);
+            view.addView(icon, iconParams);
+            view.addView(slider(row.volume, row.text, row.onVolume),
+                    new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            return view;
+        }
         LinearLayout view = new LinearLayout(activity);
         view.setGravity(Gravity.CENTER_VERTICAL);
         view.setMinimumHeight(dp(56));

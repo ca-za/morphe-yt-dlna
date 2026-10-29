@@ -903,6 +903,22 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         });
     }
 
+    /** Reads the renderer volume (Sonos: the group's); reports -1 without volume control. */
+    void readVolume(IntConsumer onVolume) {
+        onRenderer("Volume", null, r -> {
+            rendererVolume = r.volume();
+            onVolume.accept(rendererVolume);
+        });
+    }
+
+    /** Sets the renderer volume (Sonos: the group's) to {@code volume} (0-100). */
+    void setVolume(int volume) {
+        onRenderer("Volume", null, r -> {
+            rendererVolume = Math.max(0, Math.min(100, volume));
+            r.setVolume(rendererVolume);
+        });
+    }
+
     private interface RendererCall {
         void run(Renderer renderer) throws Exception;
     }

@@ -140,7 +140,9 @@ class Handler(BaseHTTPRequestHandler):
             state["groupVolume"] = int(arg(body, "DesiredVolume"))
             bump()
         elif action == "GetVolume":
-            out = "<CurrentVolume>40</CurrentVolume>"
+            out = f"<CurrentVolume>{state.get('volume', 40)}</CurrentVolume>"
+        elif action == "SetVolume":
+            state["volume"] = int(arg(body, "DesiredVolume"))
         elif action == "GetProtocolInfo":
             out = "<Source></Source><Sink>http-get:*:video/mp4:*</Sink>"
         elif action == "GetTransportInfo":
