@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-10-29T06:40:29",
-  "description": "## [0.1.4-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.3-alpha...v0.1.4-alpha) (2026-10-29)\n\n### ✨ New Features\n\n* Sonos groups and rooms in the device list, group volume ([09224dd](https://github.com/ca-za/morphe-yt-dlna/commit/09224dd22c9dcecb1c425717e5d1149dd0efed9d))",
-  "download_url": "https://github.com/ca-za/morphe-yt-dlna/releases/download/v0.1.4-alpha/patches-0.1.4-alpha.mpp",
+  "created_at": "2026-10-29T06:48:28",
+  "description": "## [0.1.5-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.4-alpha...v0.1.5-alpha) (2026-10-29)\n\n### 🐛 Bug Fixes\n\n* Sonos rooms in the device list's look ([67bf853](https://github.com/ca-za/morphe-yt-dlna/commit/67bf8534d696242742f5946cdfc20ca4ad94f748))",
+  "download_url": "https://github.com/ca-za/morphe-yt-dlna/releases/download/v0.1.5-alpha/patches-0.1.5-alpha.mpp",
   "signature_download_url": "",
-  "version": "0.1.4-alpha"
+  "version": "0.1.5-alpha"
 }

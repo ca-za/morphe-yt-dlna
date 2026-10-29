@@ -1,3 +1,9 @@
+## [0.1.5-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.4-alpha...v0.1.5-alpha) (2026-10-29)
+
+### 🐛 Bug Fixes
+
+* Sonos rooms in the device list's look ([67bf853](https://github.com/ca-za/morphe-yt-dlna/commit/67bf8534d696242742f5946cdfc20ca4ad94f748))
+
 ## [0.1.4-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.3-alpha...v0.1.4-alpha) (2026-10-29)
 
 ### ✨ New Features
