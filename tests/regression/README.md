@@ -22,6 +22,12 @@ Versions run oldest to newest per app. Installing an older version over a newer 
 app data (and the login) with `adb uninstall -k`; data of a much newer version may not suit an
 older app, in which case YouTube Music asks to sign in again.
 
+A version that passes completely (no ❌, all scenarios) is recorded in `verified.json`. Morphe's
+recommended versions become recommended in our bundle only after that: run
+`scripts/upstream/sync.py` and commit, or let the daily "Morphe upstream" workflow pick it up.
+New versions of the official patches are added as experimental by that workflow, after a patch
+test without an emulator (`scripts/upstream/patch_check.py`).
+
 ## Prerequisites (once)
 
 - Phone AVD `morphe_phone35` and TV AVD `gtv34` (names configurable). The runner starts them

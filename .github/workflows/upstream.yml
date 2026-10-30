@@ -1,0 +1,191 @@
+name: Morphe upstream
+
+# Keeps our app versions in line with the official Morphe patches (scripts/upstream/sync.py):
+# daily, a new official release (or a version that passed our emulator test, see
+# tests/regression/verified.json) makes a pull request to dev. New app versions are added as
+# experimental and patch-tested without an emulator (scripts/upstream/patch_check.py, APKs from
+# APKPure via apkeep, only for this run). When every one of our patches applies to every new
+# version, the pull request is merged; otherwise it stays open with the results.
+#
+# Scheduled workflows run from the default branch (main); this one works on dev. A merge by this
+# workflow makes no release (pushes with GITHUB_TOKEN start no workflows): the versions go out
+# with the next release.
+#
+# Needs: Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests".
+
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: read
+
+concurrency:
+  group: morphe-upstream
+
+jobs:
+  sync:
+    name: Sync app versions
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v7
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Latest official releases
+        id: latest
+        run: |
+          patches=$(gh release view -R MorpheApp/morphe-patches --json tagName -q .tagName)
+          desktop=$(gh release view -R MorpheApp/morphe-desktop --json tagName -q .tagName)
+          echo "patches=${patches#v}" >> "$GITHUB_OUTPUT"
+          echo "desktop=${desktop#v}" >> "$GITHUB_OUTPUT"
+          echo "Official patches ${patches}, Morphe Desktop ${desktop}"
+
+      - name: Sync versions
+        id: sync
+        run: |
+          gh api "repos/MorpheApp/morphe-patches/contents/patches-list.json?ref=v${{ steps.latest.outputs.patches }}" \
+            -H "Accept: application/vnd.github.raw" > "$RUNNER_TEMP/official.json"
+          python3 scripts/upstream/sync.py --official "$RUNNER_TEMP/official.json" \
+            --patches "${{ steps.latest.outputs.patches }}" --desktop "${{ steps.latest.outputs.desktop }}" \
+            > "$RUNNER_TEMP/new.json"
+          cat "$RUNNER_TEMP/new.json"
+          if git diff --quiet; then
+            echo "Nothing to change."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          # One pull request per state: an open one for the same change is not made twice.
+          key=$(git diff | sha1sum | cut -c1-8)
+          echo "branch=upstream/morphe-${{ steps.latest.outputs.patches }}-$key" >> "$GITHUB_OUTPUT"
+
+      - name: Already open?
+        id: open
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          if git ls-remote --exit-code --heads origin "${{ steps.sync.outputs.branch }}" >/dev/null; then
+            echo "Branch ${{ steps.sync.outputs.branch }} exists already."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Java
+        if: steps.sync.outputs.changed == 'true' && steps.open.outputs.exists != 'true'
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # The stream proxy is Rust, cross-compiled for Android with the runner's NDK.
+      - name: Setup Rust for Android
+        if: steps.sync.outputs.changed == 'true' && steps.open.outputs.exists != 'true'
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add --toolchain stable aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+
+      - name: Build our patches
+        if: steps.sync.outputs.changed == 'true' && steps.open.outputs.exists != 'true'
+        run: ./gradlew :patches:buildAndroid --no-daemon
+
+      - name: Patch test of the new versions
+        id: check
+        if: steps.sync.outputs.changed == 'true' && steps.open.outputs.exists != 'true'
+        run: |
+          set +e
+          mkdir -p tools apks out
+          gh release download "v${{ steps.latest.outputs.patches }}" -R MorpheApp/morphe-patches \
+            -p "patches-${{ steps.latest.outputs.patches }}.mpp" -D tools
+          gh release download "v${{ steps.latest.outputs.desktop }}" -R MorpheApp/morphe-desktop \
+            -p "morphe-desktop-${{ steps.latest.outputs.desktop }}-all.jar" -D tools
+          gh release download -R EFForg/apkeep -p apkeep-x86_64-unknown-linux-gnu -O "$RUNNER_TEMP/apkeep"
+          chmod +x "$RUNNER_TEMP/apkeep"
+          ours=$(ls patches/build/libs/patches-*.mpp | grep -v sources | head -1)
+          results="$RUNNER_TEMP/results.jsonl"
+          : > "$results"
+          python3 -c 'import json,sys;[print(p,v) for p,vs in json.load(open(sys.argv[1])).items() for v in vs]' \
+            "$RUNNER_TEMP/new.json" | while read -r package version; do
+            dir="apks/$package-$version"
+            mkdir -p "$dir"
+            if ! "$RUNNER_TEMP/apkeep" -a "$package@$version" "$dir" > "$dir.log" 2>&1 \
+                || [ -z "$(ls "$dir")" ]; then
+              echo "No APK of $package $version: $(tail -3 "$dir.log" | tr '\n' ' ')"
+              printf '{"package":"%s","version":"%s","ok":false,"missing":true}\n' "$package" "$version" >> "$results"
+              continue
+            fi
+            apk=$(ls "$dir"/* | head -1)
+            echo "Patching $package $version ($(basename "$apk"))"
+            python3 scripts/upstream/patch_check.py --desktop tools/morphe-desktop-*-all.jar \
+              --official tools/patches-*.mpp --ours "$ours" --package "$package" --version "$version" \
+              --apk "$apk" --out out >> "$results"
+            rm -rf "$dir" out/*.apk
+          done
+          cat "$results"
+          if [ -s "$results" ] && python3 -c 'import json,sys;sys.exit(0 if all(json.loads(l)["ok"] for l in open(sys.argv[1])) else 1)' "$results"; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          elif [ ! -s "$results" ]; then
+            # No new versions (only promotions): nothing to patch-test.
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      - name: Patch logs
+        if: always() && steps.check.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: patch-logs
+          path: out/*.log
+          if-no-files-found: ignore
+
+      - name: Pull request
+        if: steps.sync.outputs.changed == 'true' && steps.open.outputs.exists != 'true'
+        run: |
+          branch="${{ steps.sync.outputs.branch }}"
+          patches="${{ steps.latest.outputs.patches }}"
+          desktop="${{ steps.latest.outputs.desktop }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898732+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add patches/src/main/kotlin/app/ytdlna/patches/shared/Constants.kt scripts/upstream/state.json patches-list.json
+          git commit -q -m "bump: App versions of the official Morphe patches $patches"
+          git push -q origin "$branch"
+          body="$RUNNER_TEMP/body.md"
+          python3 - "$RUNNER_TEMP/results.jsonl" "$patches" "$desktop" > "$body" <<'PY'
+          import json, sys
+          path, patches, desktop = sys.argv[1:4]
+          rows = [json.loads(l) for l in open(path)] if __import__("os").path.exists(path) else []
+          print(f"Official Morphe patches **{patches}**, Morphe Desktop **{desktop}**.\n")
+          print("New app versions are listed as experimental until they pass the emulator test "
+                "(`tests/regression/run.py`, which records them in `tests/regression/verified.json`).\n")
+          if rows:
+              print("| App | Version | Patch test | Detail |\n|---|---|---|---|")
+              for r in rows:
+                  if r.get("missing"):
+                      state, detail = "⏭️ no APK", "APKPure has no APK of it: test locally"
+                  elif r["ok"]:
+                      state, detail = "✅", ", ".join(r["applied"])
+                  else:
+                      state, detail = "❌", "; ".join(f"{k}: {v}" for k, v in r["failed"].items())
+                  if r.get("officialFailed"):
+                      detail += f" (official failed: {', '.join(r['officialFailed'])})"
+                  print(f"| {r['package']} | {r['version']} | {state} | {detail.replace('|', '/')} |")
+          else:
+              print("No new app versions: only the recommended ones changed.")
+          PY
+          gh pr create --base dev --head "$branch" --title "bump: App versions of the official Morphe patches $patches" --body-file "$body"
+          if [ "${{ steps.check.outputs.ok }}" = "true" ]; then
+            gh pr merge "$branch" --squash --delete-branch
+          else
+            echo "::warning::Patch test failed or APKs missing: the pull request stays open."
+          fi

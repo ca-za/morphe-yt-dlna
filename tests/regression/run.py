@@ -13,6 +13,7 @@ signed-in Google account on the phone (YouTube Music needs it). See tests/regres
 """
 
 import argparse
+import json
 import shutil
 import sys
 import time
@@ -21,6 +22,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ytdlna_test import build, runner, scenarios  # noqa: E402
+
+
+def _verified(apk) -> None:
+    """Records a version that passed in tests/regression/verified.json."""
+    path = Path(__file__).resolve().parent / "verified.json"
+    data = json.loads(path.read_text()) if path.exists() else {}
+    versions = set(data.get(apk.package, [])) | {apk.version}
+    data[apk.package] = sorted(versions, key=_version_key)
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"  {apk.package} {apk.version} recorded as verified", flush=True)
 
 
 def main() -> int:
@@ -70,6 +81,9 @@ def main() -> int:
             reports.append({"app": apk.app, "version": apk.version, "patch": {}, "verdict": f"error: {e}",
                             "results": []})
         print(f"  -> {reports[-1]['verdict']}", flush=True)
+        # A full run without failures: the version may become recommended (scripts/upstream/sync.py).
+        if reports[-1]["verdict"] == "pass" and not args.only:
+            _verified(apk)
 
     runner.summary(reports, run_dir / "summary.md")
     print(f"\nSummary: {run_dir / 'summary.md'}")

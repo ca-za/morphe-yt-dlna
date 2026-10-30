@@ -5,9 +5,10 @@ import app.morphe.patcher.patch.AppTarget
 import app.morphe.patcher.patch.Compatibility
 
 /**
- * The app versions of the official Morphe patches (same recommended and experimental ones, same
- * signatures), as far as the regression tests cover them: Morphe Manager patches both sources
- * together only for a version they share.
+ * The app versions of the official Morphe patches (same signatures): Morphe Manager patches both
+ * sources together only for a version they share. scripts/upstream/sync.py keeps the targets in
+ * line with them; a version is recommended only when Morphe recommends it and it passed our
+ * emulator test (tests/regression/verified.json), otherwise experimental.
  */
 internal object Constants {
     val COMPATIBILITY_YOUTUBE = Compatibility(
