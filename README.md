@@ -72,15 +72,15 @@ In Morphe's settings, under Player:
 - With album covers on, YouTube Music sends title and artist to Deezer / iTunes.
 
 <!-- PATCHES_START EXPANDED -->
-> **[v0.1.11-alpha](https://github.com/ca-za/morphe-yt-dlna/releases/tag/v0.1.11-alpha)**&nbsp;&nbsp;•&nbsp;&nbsp;`dev`&nbsp;&nbsp;•&nbsp;&nbsp;13 patches total
+> **[v0.1.12-alpha](https://github.com/ca-za/morphe-yt-dlna/releases/tag/v0.1.12-alpha)**&nbsp;&nbsp;•&nbsp;&nbsp;`dev`&nbsp;&nbsp;•&nbsp;&nbsp;13 patches total
 <details open>
 <summary>📦 YouTube&nbsp;&nbsp;•&nbsp;&nbsp;6 patches</summary>
 <br>
 
 **🎯 Supported versions:**
 
-| 🧪&nbsp;21.42.241 | 🧪&nbsp;21.41.525 | 21.20.405 | 20.51.39 |
-| :---: | :---: | :---: | :---: |
+| 🧪&nbsp;21.43.523 | 🧪&nbsp;21.42.241 | 🧪&nbsp;21.30.216 | 🧪&nbsp;21.28.208 | 🧪&nbsp;21.23.492 | 20.51.39 | 🧪&nbsp;20.26.46 |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 
 | 💊&nbsp;Patch | 📜&nbsp;Description | ⚙️&nbsp;Options |
 |----------|----------------|-----------|
@@ -99,8 +99,8 @@ In Morphe's settings, under Player:
 
 **🎯 Supported versions:**
 
-| 🧪&nbsp;9.42.52 | 🧪&nbsp;9.41.52 | 🧪&nbsp;9.40.51 | 9.20.53 | 9.15.51 |
-| :---: | :---: | :---: | :---: | :---: |
+| 🧪&nbsp;9.43.51 | 🧪&nbsp;9.42.52 | 🧪&nbsp;9.41.52 | 🧪&nbsp;9.30.53 | 9.20.53 | 9.15.51 |
+| :---: | :---: | :---: | :---: | :---: | :---: |
 
 | 💊&nbsp;Patch | 📜&nbsp;Description | ⚙️&nbsp;Options |
 |----------|----------------|-----------|

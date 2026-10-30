@@ -1,3 +1,9 @@
+## [0.1.12-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.11-alpha...v0.1.12-alpha) (2026-10-30)
+
+### 🚀 Updated App Support
+
+* App versions of the official Morphe patches 2.0.0 (#5) ([bc9c3bc](https://github.com/ca-za/morphe-yt-dlna/commit/bc9c3bcb95e75210d3f37a1e45d6577945e6df71))
+
 ## [0.1.11-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.10-alpha...v0.1.11-alpha) (2026-10-30)
 
 ### 🐛 Bug Fixes
