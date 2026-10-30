@@ -10,10 +10,14 @@ app's code). Prints one JSON line with the result; exit code 1 if a patch of our
 """
 
 import argparse
+import glob
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,6 +38,36 @@ def expected(package: str) -> list[str]:
     return names
 
 
+def google_signatures(package: str) -> set[str]:
+    """The SHA-256 certificate digests of Google's signing keys for {package} (from our patches)."""
+    patches = json.loads((ROOT / "patches-list.json").read_text())["patches"]
+    for p in patches:
+        for c in p.get("compatiblePackages") or []:
+            if c.get("packageName") == package and c.get("signatures"):
+                return {d.lower() for d in c["signatures"]}
+    return set()
+
+
+def signer_digests(apk: Path) -> set[str]:
+    """Certificate digests of an APK, or of the base APK of an APKM/XAPK bundle."""
+    sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT") or str(Path.home() / "Library/Android/sdk")
+    apksigner = sorted(glob.glob(f"{sdk}/build-tools/*/apksigner"))[-1]
+    with tempfile.TemporaryDirectory() as tmp:
+        target = apk
+        if zipfile.is_zipfile(apk) and apk.suffix in (".xapk", ".apkm", ".apks"):
+            with zipfile.ZipFile(apk) as z:
+                names = [n for n in z.namelist() if n.endswith(".apk")]
+                base = next((n for n in names if Path(n).name == "base.apk"), None) \
+                    or next((n for n in names if "config." not in n and "split" not in n), None)
+                if not base:
+                    return set()
+                target = Path(tmp) / "base.apk"
+                target.write_bytes(z.read(base))
+        out = subprocess.run([apksigner, "verify", "--print-certs", str(target)],
+                             capture_output=True, text=True).stdout
+    return {m.lower() for m in re.findall(r"certificate SHA-256 digest: ([0-9a-fA-F]+)", out)}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     for name in ("desktop", "official", "ours", "apk", "out"):
@@ -44,6 +78,14 @@ def main() -> None:
 
     args.out.mkdir(parents=True, exist_ok=True)
     stem = f"{args.package}-{args.version}"
+
+    # An APK from a third-party store may be altered: only Google's own is patched.
+    digests = signer_digests(args.apk)
+    if not digests & google_signatures(args.package):
+        print(json.dumps({"package": args.package, "version": args.version, "ok": False,
+                          "untrusted": sorted(digests) or ["no valid signature"]}))
+        sys.exit(1)
+
     result_file = args.out / f"{stem}.result.json"
     cmd = ["java", "-jar", str(args.desktop), "patch", "--continue-on-error", "-p", str(args.official)]
     for name in DISABLED_OFFICIAL.get(args.package, []):

@@ -116,9 +116,12 @@ jobs:
             "$RUNNER_TEMP/new.json" | while read -r package version; do
             dir="apks/$package-$version"
             mkdir -p "$dir"
-            # APKPure: no login (apkeep's default, Google Play, needs one). stdin closed: it
-            # would read the version list of this loop.
-            if ! "$RUNNER_TEMP/apkeep" -d apk-pure -a "$package@$version" "$dir" < /dev/null > "$dir.log" 2>&1 \
+            # APKPure: no login (apkeep's default, Google Play, needs one). A store that has
+            # altered apps before: patch_check.py only patches APKs with Google's signature, and
+            # they are never installed or published. stdin closed: apkeep would read the
+            # version list of this loop.
+            if ! "$RUNNER_TEMP/apkeep" -d apk-pure -o 'acknowledge_dangers=true,arch=arm64-v8a' \
+                -a "$package@$version" "$dir" < /dev/null > "$dir.log" 2>&1 \
                 || [ -z "$(ls "$dir")" ]; then
               echo "No APK of $package $version: $(tail -3 "$dir.log" | tr '\n' ' ')"
               printf '{"package":"%s","version":"%s","ok":false,"missing":true}\n' "$package" "$version" >> "$results"
@@ -175,6 +178,8 @@ jobs:
               for r in rows:
                   if r.get("missing"):
                       state, detail = "⏭️ no APK", "APKPure has no APK of it: test locally"
+                  elif r.get("untrusted"):
+                      state, detail = "⚠️ not Google's", "APK not signed by Google, not patched: " + ", ".join(r["untrusted"])
                   elif r["ok"]:
                       state, detail = "✅", ", ".join(r["applied"])
                   else:
