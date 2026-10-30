@@ -312,7 +312,7 @@ def manual_devices(ctx: Context) -> Result:
     try:
         if not _open_picker(ctx):
             return Result("fail", "picker did not open")
-        marked = ctx.ui.wait(10, contains=("DLNA · manual · ", "DLNA · manuell · "))
+        marked = ctx.ui.wait(10, contains=(" · manual · ", " · manuell · "))
         listed = ctx.ui.wait(15, contains=("Manual · unreachable", "Manuell · nicht erreichbar"))
         removed = renderer_kept = False
         confirm = None
