@@ -116,7 +116,9 @@ jobs:
             "$RUNNER_TEMP/new.json" | while read -r package version; do
             dir="apks/$package-$version"
             mkdir -p "$dir"
-            if ! "$RUNNER_TEMP/apkeep" -a "$package@$version" "$dir" > "$dir.log" 2>&1 \
+            # APKPure: no login (apkeep's default, Google Play, needs one). stdin closed: it
+            # would read the version list of this loop.
+            if ! "$RUNNER_TEMP/apkeep" -d apk-pure -a "$package@$version" "$dir" < /dev/null > "$dir.log" 2>&1 \
                 || [ -z "$(ls "$dir")" ]; then
               echo "No APK of $package $version: $(tail -3 "$dir.log" | tr '\n' ' ')"
               printf '{"package":"%s","version":"%s","ok":false,"missing":true}\n' "$package" "$version" >> "$results"
@@ -126,7 +128,7 @@ jobs:
             echo "Patching $package $version ($(basename "$apk"))"
             python3 scripts/upstream/patch_check.py --desktop tools/morphe-desktop-*-all.jar \
               --official tools/patches-*.mpp --ours "$ours" --package "$package" --version "$version" \
-              --apk "$apk" --out out >> "$results"
+              --apk "$apk" --out out < /dev/null >> "$results"
             rm -rf "$dir" out/*.apk
           done
           cat "$results"
