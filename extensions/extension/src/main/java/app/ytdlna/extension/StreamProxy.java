@@ -192,6 +192,7 @@ final class StreamProxy {
             m3u8.append("#EXT-X-STREAM-INF:BANDWIDTH=").append(video.bitrate + audio.bitrate)
                     .append(",CODECS=\"").append(video.codecs()).append(',').append(audio.codecs()).append('"')
                     .append(",RESOLUTION=").append(video.width).append('x').append(video.height)
+                    .append(video.fps > 0 ? ",FRAME-RATE=" + video.fps + ".000" : "")
                     .append(",AUDIO=\"audio\"\n")
                     .append('L').append(info.formats.indexOf(video)).append("/index.m3u8\n");
         }
@@ -231,6 +232,7 @@ final class StreamProxy {
             m3u8.append("#EXT-X-STREAM-INF:BANDWIDTH=").append(video.bitrate + audio.bitrate)
                     .append(",CODECS=\"").append(video.codecs()).append(',').append(audio.codecs()).append('"')
                     .append(",RESOLUTION=").append(video.width).append('x').append(video.height)
+                    .append(video.fps > 0 ? ",FRAME-RATE=" + video.fps + ".000" : "")
                     .append(",AUDIO=\"audio\"\n")
                     .append(info.formats.indexOf(video)).append(".m3u8\n");
         }
@@ -339,6 +341,9 @@ final class StreamProxy {
                     .append("\" codecs=\"").append(f.codecs())
                     .append("\" bandwidth=\"").append(f.bitrate).append('"');
             if (f.width > 0) mpd.append(" width=\"").append(f.width).append("\" height=\"").append(f.height).append('"');
+            // The renderer switches the display to the video's rate before the first frame (ExoPlayer
+            // takes it only from the manifest for DASH).
+            if (f.fps > 0 && !f.isAudioOnly()) mpd.append(" frameRate=\"").append(f.fps).append('"');
             if (f.isAudioOnly()) mpd.append(" audioSamplingRate=\"44100\"");
             mpd.append(">\n");
             if (f.isAudioOnly()) {

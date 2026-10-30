@@ -13,6 +13,8 @@ final class StreamInfo {
         long bitrate;
         int width;
         int height;
+        /** Frames per second of a video format (YouTube gives whole numbers: 24, 25, 30, 50, 60); 0 if unknown. */
+        int fps;
         long initStart = -1, initEnd = -1;
         long indexStart = -1, indexEnd = -1;
         long contentLength;
@@ -57,7 +59,7 @@ final class StreamInfo {
 
         @Override
         public String toString() {
-            return "itag=" + itag + " " + mimeType + " " + width + "x" + height
+            return "itag=" + itag + " " + mimeType + " " + width + "x" + height + (fps > 0 ? "@" + fps : "")
                     + " br=" + bitrate + " len=" + contentLength
                     + " init=" + initStart + "-" + initEnd + " index=" + indexStart + "-" + indexEnd
                     + (hasUrl() ? " url" : " NO-URL")
@@ -89,6 +91,7 @@ final class StreamInfo {
     private static final int F_INIT_RANGE = 9;
     private static final int F_INDEX_RANGE = 10;
     private static final int F_CONTENT_LENGTH = 12;
+    private static final int F_FPS = 25;
     // Range field numbers.
     private static final int R_START = 3;
     private static final int R_END = 4;
@@ -178,6 +181,7 @@ final class StreamInfo {
         format.bitrate = Proto.varint(fields, F_BITRATE);
         format.width = (int) Proto.varint(fields, F_WIDTH);
         format.height = (int) Proto.varint(fields, F_HEIGHT);
+        if (format.mimeType.startsWith("video/")) format.fps = (int) Proto.varint(fields, F_FPS);
         format.contentLength = Proto.varint(fields, F_CONTENT_LENGTH);
         Proto.Field init = Proto.first(fields, F_INIT_RANGE);
         if (init != null && init.wireType == Proto.BYTES) {
