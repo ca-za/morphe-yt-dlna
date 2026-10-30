@@ -150,7 +150,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: patch-logs
-          path: out/*.log
+          path: |
+            out/*.log
+            out/*.result.json
           if-no-files-found: ignore
 
       - name: Pull request
