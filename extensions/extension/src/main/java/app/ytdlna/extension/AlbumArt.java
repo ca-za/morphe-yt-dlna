@@ -122,11 +122,28 @@ final class AlbumArt {
         return details;
     }
 
-    /** Looks up several titles in parallel, waiting at most {@code timeoutMs} in total. */
+    /** Year and label of a match as far as already known, without a request. */
+    static String[] cachedDetails(Match match) {
+        String[] known = match.deezerAlbumId.isEmpty() ? null : albumDetails.get(match.deezerAlbumId);
+        return known != null ? known : new String[]{match.year, ""};
+    }
+
+    /**
+     * Looks up several titles in parallel, and for sure matches also their album's year and label,
+     * waiting at most {@code timeoutMs} in total.
+     */
     static void prefetch(List<String[]> titlesAndArtists, long timeoutMs) {
         List<Callable<Match>> tasks = new ArrayList<>();
         for (String[] item : titlesAndArtists) {
-            if (!cache.containsKey(key(item[0], item[1]))) tasks.add(() -> lookup(item[0], item[1]));
+            Match known = cache.get(key(item[0], item[1]));
+            if (known == NOT_FOUND) continue;
+            if (known != null && (!known.isSure() || known.deezerAlbumId.isEmpty()
+                    || albumDetails.containsKey(known.deezerAlbumId))) continue;
+            tasks.add(() -> {
+                Match match = lookup(item[0], item[1]);
+                if (match != null && match.isSure()) details(match);
+                return match;
+            });
         }
         if (tasks.isEmpty()) return;
         try {

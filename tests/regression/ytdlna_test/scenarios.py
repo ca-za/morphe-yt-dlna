@@ -449,6 +449,9 @@ def renderer_metadata(ctx: Context) -> Result:
         # The length is known once the app loaded the title, or from the music database for
         # songs; a plain video further down the queue has none yet.
         meta["nextDuration"] = upcoming.get("duration") or "unknown"
+        # Year and label of later titles come from the prefetch (when the music database has them).
+        meta["nextDate"] = upcoming.get("date") or "unknown"
+        meta["nextPublisher"] = upcoming.get("publisher") or "unknown"
     detail = ", ".join(problems) or " · ".join(
         v for v in (meta.get("title"), meta.get("artist"), meta.get("album"), meta.get("date"), meta.get("publisher")) if v)
     return Result("fail" if problems else "pass", detail, meta)

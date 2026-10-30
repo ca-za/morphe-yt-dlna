@@ -25,8 +25,8 @@ final class Covers {
 
     /**
      * Cover URL for {@code track}, null if none. Sets {@code track.artUrl} to it and fills in what
-     * the music database knows and the app does not: album, length, and for the playing title
-     * (looked up now) also year and label.
+     * the music database knows and the app does not: album, length, year and label (the latter two
+     * for titles not looked up now only if {@link #prefetch} found them).
      *
      * @param lookup Look the title up now; otherwise only an already found match is used.
      */
@@ -40,7 +40,7 @@ final class Covers {
                     if (track.album.isEmpty()) track.album = match.album;
                     // An estimate until the app has loaded the title's streams.
                     if (track.durationMs <= 0) track.durationMs = match.durationMs;
-                    String[] details = lookup ? AlbumArt.details(match) : new String[]{match.year, ""};
+                    String[] details = lookup ? AlbumArt.details(match) : AlbumArt.cachedDetails(match);
                     if (track.year.isEmpty()) track.year = details[0];
                     if (track.label.isEmpty()) track.label = details[1];
                 }
@@ -49,7 +49,7 @@ final class Covers {
         return track.artUrl.isEmpty() ? null : track.artUrl;
     }
 
-    /** Looks up the album covers of several tracks in parallel, so later calls find them cached. */
+    /** Looks up covers, year and label of several tracks in parallel, so later calls find them cached. */
     void prefetch(List<Track> tracks) {
         if (!lookupEnabled() || tracks.isEmpty()) return;
         List<String[]> items = new ArrayList<>();
