@@ -64,11 +64,20 @@ public final class Captions {
     /** Serves timed lyrics as the video's "Lyrics" caption track. Null if there are no cues. */
     static Track putLyrics(String videoId, List<Cue> cues) {
         if (cues.isEmpty()) return null;
+        String vtt = vtt(cues);
+        String before = lyricsVtt.put(videoId, vtt);
+        // New timing at the same address would not reach a renderer that already loaded the
+        // track: a new version in the query makes it load the track again (the proxy ignores it).
+        if (before != null && !before.equals(vtt)) lyricsVersion.merge(videoId, 1, Integer::sum);
         fetched.put(videoId + "/" + LYRICS.vssId, cues);
         NativeProxy.nativePutText(path(videoId, LYRICS, "srt"), SRT, srt(cues));
-        NativeProxy.nativePutText(path(videoId, LYRICS, "vtt"), VTT, vtt(cues));
+        NativeProxy.nativePutText(path(videoId, LYRICS, "vtt"), VTT, vtt);
         return LYRICS;
     }
+
+    /** The lyrics track last served per video, and how often its timing changed since. */
+    private static final Map<String, String> lyricsVtt = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, Integer> lyricsVersion = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** The track sent with the title, when it is not the preferred caption track. */
     static void select(String videoId, Track track) {
@@ -237,6 +246,12 @@ public final class Captions {
         return "/captions/" + videoId + "." + track.key() + "." + extension;
     }
 
+    /** The track's address for the renderer: its path, plus the lyrics' version once it changed. */
+    static String url(String videoId, Track track, String extension) {
+        Integer version = track == LYRICS ? lyricsVersion.get(videoId) : null;
+        return path(videoId, track, extension) + (version == null ? "" : "?v=" + (version + 1));
+    }
+
     /** The tracks for the extras document (the published ones, with their addresses). */
     static JSONArray extrasJson(String videoId, String baseUrl, Track selected) throws JSONException {
         JSONArray out = new JSONArray();
@@ -250,8 +265,8 @@ public final class Captions {
                     .put("auto", t.auto)
                     .put("lyrics", t == LYRICS)
                     .put("default", t == selected)
-                    .put("srt", baseUrl + path(videoId, t, "srt"))
-                    .put("vtt", baseUrl + path(videoId, t, "vtt")));
+                    .put("srt", baseUrl + url(videoId, t, "srt"))
+                    .put("vtt", baseUrl + url(videoId, t, "vtt")));
         }
         return out;
     }

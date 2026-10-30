@@ -51,6 +51,10 @@ final class DlnaDevice {
     String zonesType;
     String zonesUrl;
 
+    // A renderer that can skip SponsorBlock segments itself (see RendererExtras.takeSkipping).
+    String castExtrasType;
+    String castExtrasUrl;
+
     boolean hasOpenHomePlaylist() {
         return playlistControlUrl != null;
     }
@@ -213,6 +217,9 @@ final class DlnaDevice {
                                         && timeControlUrl == null) {
                                     timeType = serviceType;
                                     timeControlUrl = absolute;
+                                } else if (serviceType.startsWith(RendererExtras.SERVICE) && castExtrasUrl == null) {
+                                    castExtrasType = serviceType;
+                                    castExtrasUrl = absolute;
                                 } else if (serviceType.startsWith(RendererZones.SERVICE) && zonesUrl == null) {
                                     zonesType = serviceType;
                                     zonesUrl = absolute;

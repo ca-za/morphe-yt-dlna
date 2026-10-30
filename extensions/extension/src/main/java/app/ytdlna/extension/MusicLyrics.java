@@ -43,17 +43,22 @@ final class MusicLyrics {
         final String state;
         final String provider;
         final boolean synced;
+        /** The lines, timed on the video (see {@link #toVideoMs}). */
         final List<Line> lines;
         /** Morphe's lyrics object: a new one means new lyrics. */
         final Object identity;
+        /** How the song's times were moved onto the video: changes when Morphe's mapping does. */
+        final String mapping;
 
-        Snapshot(String videoId, String state, String provider, boolean synced, List<Line> lines, Object identity) {
+        Snapshot(String videoId, String state, String provider, boolean synced, List<Line> lines, Object identity,
+                 String mapping) {
             this.videoId = videoId;
             this.state = state;
             this.provider = provider;
             this.synced = synced;
             this.lines = lines;
             this.identity = identity;
+            this.mapping = mapping;
         }
 
         /** Morphe is done looking for this song (found or not). */
@@ -66,8 +71,12 @@ final class MusicLyrics {
         }
     }
 
-    private static Method getInstance;
+    private static final String SETTINGS = "app.morphe.extension.music.settings.Settings";
+
+    private static Method getInstance, toVideoTime, temporaryOffset;
     private static Field stateField, lyricsField, videoField;
+    /** Morphe's lyrics offset setting (an IntegerSetting), null if it has none. */
+    private static Object offsetSetting;
     private static boolean resolved;
 
     private MusicLyrics() {
@@ -82,6 +91,14 @@ final class MusicLyrics {
             stateField = field(manager, "state");
             lyricsField = field(manager, "currentLyrics");
             videoField = field(manager, "loadedForVideoId");
+            // Optional: how Morphe times the lyrics on the video (newer Morphe versions).
+            toVideoTime = optionalMethod(manager, "toVideoTimeMs", long.class);
+            temporaryOffset = optionalMethod(manager, "getTemporaryOffsetMs");
+            try {
+                offsetSetting = field(Class.forName(SETTINGS), "LYRICS_OFFSET_MS").get(null);
+            } catch (Throwable ignored) {
+                offsetSetting = null;
+            }
             return true;
         } catch (Throwable t) {
             getInstance = null;
@@ -93,6 +110,54 @@ final class MusicLyrics {
         Field f = c.getDeclaredField(name);
         f.setAccessible(true);
         return f;
+    }
+
+    private static Method optionalMethod(Class<?> c, String name, Class<?>... params) {
+        try {
+            Method m = c.getDeclaredMethod(name, params);
+            m.setAccessible(true);
+            return m;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * Morphe's lyrics run on the song's time. For a music video (with an intro, skits or an outro
+     * that the song doesn't have) Morphe's lyrics view maps the video's position onto the song with
+     * the video's SponsorBlock segments, minus the user's lyrics offsets. This is the reverse: the
+     * video position at which Morphe shows a line that starts at {@code songMs}, so the renderer
+     * shows it at the same moment as the phone. Unchanged if Morphe has no such mapping.
+     */
+    private static long toVideoMs(Object manager, long songMs) {
+        if (songMs < 0) return songMs;
+        long ms = songMs + offsetMs(manager);
+        if (toVideoTime != null) {
+            try {
+                ms = ((Number) toVideoTime.invoke(manager, ms)).longValue();
+            } catch (Throwable ignored) {
+            }
+        }
+        return Math.max(0, ms);
+    }
+
+    /** Morphe's lyrics offsets: the setting and the one set by swiping the lyrics. */
+    private static long offsetMs(Object manager) {
+        long offset = 0;
+        try {
+            if (offsetSetting != null) offset += ((Number) call(offsetSetting, "get")).longValue();
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (temporaryOffset != null) offset += ((Number) temporaryOffset.invoke(manager)).longValue();
+        } catch (Throwable ignored) {
+        }
+        return offset;
+    }
+
+    /** Timed lyrics still on the song's time that Morphe may yet move onto the video. */
+    static boolean mayMove(Snapshot s) {
+        return toVideoTime != null && s.synced && s.hasLines() && s.mapping.isEmpty();
     }
 
     /** Whether Morphe's lyrics feature is in the app. */
@@ -112,7 +177,7 @@ final class MusicLyrics {
             if (!videoId.equals(loadedFor)) return null;
             String stateName = state == null ? "IDLE" : state.toString();
             if (lyrics == null || !"LOADED".equals(stateName)) {
-                return new Snapshot(videoId, stateName, "", false, Collections.emptyList(), lyrics);
+                return new Snapshot(videoId, stateName, "", false, Collections.emptyList(), lyrics, "");
             }
             boolean synced = Boolean.TRUE.equals(call(lyrics, "synced"));
             String provider = String.valueOf(call(lyrics, "providerName"));
@@ -120,25 +185,43 @@ final class MusicLyrics {
             Object list = call(lyrics, "lines");
             if (list instanceof List) {
                 for (Object l : (List<?>) list) {
-                    long start = ((Number) call(l, "startTimeMs")).longValue();
-                    long end = ((Number) call(l, "endTimeMs")).longValue();
+                    long start = toVideoMs(manager, ((Number) call(l, "startTimeMs")).longValue());
+                    long end = toVideoMs(manager, ((Number) call(l, "endTimeMs")).longValue());
                     Line line = new Line(start, end, String.valueOf(call(l, "text")).trim());
                     Object words = call(l, "words");
                     if (words instanceof List) {
                         for (Object w : (List<?>) words) {
-                            line.wordTimes.add(new long[]{((Number) call(w, "startMs")).longValue(),
-                                    ((Number) call(w, "endMs")).longValue()});
+                            line.wordTimes.add(new long[]{
+                                    toVideoMs(manager, ((Number) call(w, "startMs")).longValue()),
+                                    toVideoMs(manager, ((Number) call(w, "endMs")).longValue())});
                             line.words.add(String.valueOf(call(w, "text")));
                         }
                     }
                     lines.add(line);
                 }
             }
-            return new Snapshot(videoId, stateName, provider, synced, lines, lyrics);
+            return new Snapshot(videoId, stateName, provider, synced, lines, lyrics, mapping(manager, synced, list, lines));
         } catch (Throwable t) {
             Log.d("Reading Morphe's lyrics failed: " + t);
             return null;
         }
+    }
+
+    /** The shift of each line, if the lyrics moved on the video (for the log and change checks). */
+    private static String mapping(Object manager, boolean synced, Object raw, List<Line> lines) throws Exception {
+        if (!synced || !(raw instanceof List) || lines.isEmpty()) return "";
+        List<?> songLines = (List<?>) raw;
+        StringBuilder out = new StringBuilder();
+        long last = 0;
+        for (int i = 0; i < lines.size() && i < songLines.size(); i++) {
+            long song = ((Number) call(songLines.get(i), "startTimeMs")).longValue();
+            if (song < 0) continue;
+            long shift = lines.get(i).start - song;
+            if (shift != last) out.append(out.length() == 0 ? "" : ", ").append("+").append(shift / 1000.0)
+                    .append(" s from ").append(song / 1000.0).append(" s");
+            last = shift;
+        }
+        return out.toString();
     }
 
     private static Object call(Object target, String name) throws Exception {

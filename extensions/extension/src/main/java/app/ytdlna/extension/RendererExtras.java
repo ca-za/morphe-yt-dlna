@@ -30,9 +30,40 @@ final class RendererExtras {
     }
 
     /** Whether the renderer asked for the extras (explicitly: a wildcard sink does not count). */
+    /** The renderer's service to take over skipping (docs/renderer-extras.md, section 4). */
+    static final String SERVICE = "urn:ytdlna-org:service:CastExtras:";
+
+    /** The renderer confirmed it skips segments itself: the phone no longer sends Morphe's skips. */
+    static volatile boolean rendererSkips;
+
+    /**
+     * Asks the renderer to skip segments itself (it forgets that when its app restarts, so this
+     * goes with every title). Only its confirmation hands skipping over; without it the phone
+     * keeps skipping, so a failure never leaves the segments unskipped. Not on the main thread.
+     */
+    static boolean takeSkipping(DlnaDevice device) {
+        boolean skips = false;
+        if (wanted(device) && device.castExtrasUrl != null) {
+            try {
+                String answer = DlnaController.soap(device.castExtrasUrl, device.castExtrasType, "SetSkipping",
+                        "<Enabled>1</Enabled>");
+                skips = answer.matches("(?s).*<Enabled>\\s*(1|true)\\s*</Enabled>.*");
+            } catch (Exception e) {
+                Log.d("SetSkipping failed, the phone skips: " + e.getMessage());
+            }
+        }
+        if (skips != rendererSkips) Log.i(skips ? "The renderer skips segments itself" : "The phone skips segments");
+        rendererSkips = skips;
+        return skips;
+    }
+
     static boolean wanted(DlnaDevice device) {
         return Features.rendererExtras() && (forceAnnounce || device.lists(MIME));
     }
+
+    /** Titles whose document counts as complete with what Morphe had in time. */
+    private static final java.util.Set<String> timedOutVideos = java.util.Collections.newSetFromMap(
+            new java.util.concurrent.ConcurrentHashMap<>());
 
     /** Titles whose real document is published (a placeholder must not replace it). */
     private static final java.util.Set<String> published = java.util.Collections.newSetFromMap(
@@ -53,7 +84,7 @@ final class RendererExtras {
                     .put("chapters", new JSONArray())
                     .put("captions", new JSONArray())
                     .put("lyrics", JSONObject.NULL)
-                    .put("skipBy", "phone");
+                    .put("skipBy", rendererSkips ? "renderer" : "phone");
             NativeProxy.nativePutText(path(videoId), MIME, doc.toString());
         } catch (JSONException e) {
             Log.e("Building the pending extras for " + videoId + " failed", e);
@@ -63,6 +94,8 @@ final class RendererExtras {
     /** The proxy stopped and forgot all documents. */
     static void reset() {
         published.clear();
+        timedOutVideos.clear();
+        rendererSkips = false;
     }
 
     static String path(String videoId) {
@@ -91,7 +124,11 @@ final class RendererExtras {
         // In YouTube Music, also until Morphe's lyrics search for the song is done.
         MusicLyrics.Snapshot lyrics = MusicLyrics.read(videoId);
         boolean lyricsDone = !MusicLyrics.available() || (lyrics != null && lyrics.settled());
-        boolean complete = (known && lyricsDone) || timedOut;
+        // Timed lyrics not (yet) moved onto the video may still be, when Morphe's segments for
+        // that arrive: renderers keep following the document until then.
+        if (lyricsDone && lyrics != null && MusicLyrics.mayMove(lyrics)) lyricsDone = false;
+        if (timedOut) timedOutVideos.add(videoId);
+        boolean complete = (known && lyricsDone) || timedOutVideos.contains(videoId);
         try {
             JSONObject doc = new JSONObject()
                     .put("version", VERSION)
@@ -101,8 +138,8 @@ final class RendererExtras {
                     .put("chapters", Chapters.json(videoId))
                     .put("captions", Captions.extrasJson(videoId, baseUrl, Captions.selected(videoId)))
                     .put("lyrics", lyrics != null && lyrics.hasLines() ? MusicLyrics.json(lyrics) : JSONObject.NULL)
-                    // Who skips segments: so far always the phone (its seek reaches the renderer).
-                    .put("skipBy", "phone");
+                    // Who skips segments: the renderer once it confirmed, else the phone (its seek).
+                    .put("skipBy", rendererSkips ? "renderer" : "phone");
             if (durationMs > 0) doc.put("duration", durationMs / 1000.0);
             JSONObject audio = audioJson(videoId);
             if (audio != null) doc.put("audio", audio);

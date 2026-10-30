@@ -901,6 +901,65 @@ def music_lyrics(ctx: Context) -> Result:
             ctx.control.cmd("setup", extras="false")
 
 
+# A music video with a ~9.7 s non-music intro (SponsorBlock music_offtopic) before the song.
+MUSIC_VIDEO = ("k2qgadSvNyU", "https://music.youtube.com/watch?v=k2qgadSvNyU")
+
+
+def music_video_lyrics(ctx: Context) -> Result:
+    """YouTube Music, a music video with an intro the song doesn't have: the lyrics (timed on the
+    song) reach the renderer timed on the video, like Morphe shows them on the phone."""
+    asks = "application/vnd.ytdlna.extras+json" in ctx.renderer.sink_protocols().lower()
+    if not asks:
+        ctx.control.cmd("setup", extras="true")
+    try:
+        if not ctx.control.status().get("casting"):
+            started = start_cast(ctx)
+            if started.status != "pass":
+                return Result("env", f"cast start: {started.detail}")
+        video, link = MUSIC_VIDEO
+        since = ctx.logs.mark()
+        ctx.phone.sh(f"am start -a android.intent.action.VIEW -d '{link}' -p {ctx.package}")
+        if not ctx.logs.wait(rf"Loading {video} ", 30, since):
+            return Result("env", "music video not cast")
+        url = f"http://127.0.0.1:8720/extras/{video}.json"
+
+        def shifted():
+            try:
+                doc = json.loads(_http(url))
+            except Exception:
+                return None
+            lines = [l for l in ((doc.get("lyrics") or {}).get("lines") or []) if "start" in l]
+            return doc if lines and lines[0]["start"] >= 5 else None
+        doc = until(shifted, 45)
+        mapped = ctx.logs.find_all(r"Lyrics for " + re.escape(video) + r": .*")
+        if not doc:
+            try:
+                doc = json.loads(_http(url))
+            except Exception:
+                doc = {}
+            intro = [s for s in doc.get("segments", []) if s.get("category") == "music_offtopic"
+                     and s.get("start", 1) < 1]
+            if not (doc.get("lyrics") or {}).get("synced"):
+                return Result("env", "no timed lyrics for the music video", {"log": mapped[-3:]})
+            if not intro:
+                return Result("env", "no intro segment for the music video", {"log": mapped[-3:]})
+            first = doc["lyrics"]["lines"][0]
+            return Result("fail", f"lyrics not moved past the {intro[0]['end']} s intro",
+                          {"first": first, "log": mapped[-3:]})
+        lines = [l for l in doc["lyrics"]["lines"] if "start" in l]
+        cue = ""
+        try:
+            vtt = _http(f"http://127.0.0.1:8720/captions/{video}.lyrics.vtt")
+            cue = next((l for l in vtt.splitlines() if "-->" in l), "")
+        except Exception:
+            pass
+        return Result("pass", f"first line at {lines[0]['start']} s",
+                      {"first": lines[:2], "vtt": cue, "log": mapped[-2:]})
+    finally:
+        if not asks:
+            ctx.control.cmd("setup", extras="false")
+
+
 def renderer_extras(ctx: Context) -> Result:
     """Extras only for renderers that ask: one that does not gets plain metadata. One that asks
     (the test renderer may; otherwise forced here) finds a <desc> in the metadata pointing to the
@@ -995,8 +1054,8 @@ def renderer_extras(ctx: Context) -> Result:
 
 
 def sponsorblock(ctx: Context) -> Result:
-    """Morphe's SponsorBlock skips a sponsor segment on the phone: the skip reaches the TV.
-    Diagnostic: the debug lines (segments, TV position at the skip, time the TV spent inside)
+    """Morphe's SponsorBlock skips a sponsor segment on the phone: the skip reaches the TV, or a
+    renderer that took over skipping (CastExtras SetSkipping) skips it itself. Diagnostic: the debug lines (segments, TV position at the skip, time the TV spent inside)
     are the evidence."""
     main_video = ctx.control.status().get("currentVideoId")
     ctx.control.cmd("setup", debugLog="true")
@@ -1012,7 +1071,8 @@ def sponsorblock(ctx: Context) -> Result:
     time.sleep(5)
     start, end = SPONSOR_SEGMENT
     ctx.control.local("seek", ms=str(start - 12_000))
-    skip = ctx.logs.wait(r"SponsorBlock skip: .*sent to the TV", 35, since)
+    skip = ctx.logs.wait(r"SponsorBlock skip: .*sent to the TV|the renderer skips itself, not sent", 35, since)
+    by_renderer = bool(ctx.logs.find_all(r"The renderer skips segments itself|the renderer skips itself", since))
     # The segment runs to the end of the video: right after the skip the TV is past it, or has
     # already ended there.
     after = []
@@ -1025,12 +1085,12 @@ def sponsorblock(ctx: Context) -> Result:
             if state in ("STOPPED", "NO_MEDIA_PRESENT") or (position or 0) >= end - 1000:
                 break
             time.sleep(1)
-    lines = ctx.logs.find_all(r"SponsorBlock|Phone seek to|Correcting phone", since)
-    evidence.update({"lines": lines[-25:], "tvAfterSkip": after})
+    lines = ctx.logs.find_all(r"SponsorBlock|Phone seek to|Phone skip to|Correcting phone|skips", since)
+    evidence.update({"lines": lines[-25:], "tvAfterSkip": after, "skipBy": "renderer" if by_renderer else "phone"})
     past = any(st in ("STOPPED", "NO_MEDIA_PRESENT") or (pos or 0) >= end - 1000 for st, pos in after)
     problems = [p for p, bad in [
         ("no segments loaded", not segments),
-        ("no skip sent to the TV", not skip),
+        ("no skip (phone or renderer)", not skip),
         ("TV not past the segment", skip and not past)] if bad]
     # Back to the test video for the scenarios after this one.
     if main_video:
@@ -1397,6 +1457,7 @@ SCENARIOS = [
     ("live_hls", live_hls, {"yt"}),
     ("avtransport_next", avtransport_next, {"music"}),
     ("music_lyrics", music_lyrics, {"music"}),
+    ("music_video_lyrics", music_video_lyrics, {"music"}),
     ("crossfade", crossfade, {"music"}),
     ("media_session", media_session, {"yt", "music"}),
     ("no_crash", no_crash, {"yt", "music"}),

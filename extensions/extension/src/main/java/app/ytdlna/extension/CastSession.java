@@ -30,6 +30,12 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
     private static final long LOAD_SETTLE_MS = 2500;
     /** After loading a title, renderer events are ignored for this long. */
     private static final long RENDERER_LOAD_SETTLE_MS = 5000;
+    /** A seek this close to the renderer's position is not sent (it would only make it buffer). */
+    private static final long SEEK_MIN_MS = 1000;
+    /** A skipped segment starting this early is an intro: the renderer starts after it. */
+    private static final long INTRO_START_MS = 1000;
+    /** A skip forward by less than this (the TV nearly got there) is not sent either. */
+    private static final long SKIP_MIN_MS = 2000;
     /** Larger differences between phone and renderer position are corrected on the phone. */
     private static final long DRIFT_THRESHOLD_MS = 4000;
     private static final long SYNC_INTERVAL_MS = 10_000;
@@ -274,20 +280,29 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                             + ", not sent to the renderer");
                     return;
                 }
+                if (caller.contains("SponsorBlock") && RendererExtras.rendererSkips) {
+                    Log.d("Phone skip to " + positionMs + " ms by " + caller + ": the renderer skips itself, not sent");
+                    return;
+                }
                 SponsorBlock.Segment skipped = caller.contains("SponsorBlock") ? segmentEndingAt(positionMs) : null;
                 Log.d("Phone seek to " + positionMs + " ms by " + caller + ", sent to the renderer");
                 // Until the renderer got there, its old position must not pull the phone back.
                 ignorePositionUntil = SystemClock.elapsedRealtime() + RENDERER_LOAD_SETTLE_MS;
                 boolean forward = skipped != null || caller.contains("SponsorBlock");
                 onRenderer("Seek", r -> {
-                    // A skip forward the TV is already past (it came late, held back while the
-                    // TV loaded) would take it back.
-                    if (forward) {
-                        long tv = r.position();
-                        if (tv >= positionMs - 500) {
-                            Log.d("TV at " + tv + " ms, already past the skip to " + positionMs + " ms: not sent");
-                            return;
-                        }
+                    // Every seek makes the TV buffer again (a visible hitch). Not worth it for a
+                    // target the TV is (about) at, nor for a skip forward it is past or nearly
+                    // at: skips at a song's start come while the TV loads and are held back.
+                    long tv;
+                    try {
+                        tv = r.position();
+                    } catch (Exception e) {
+                        tv = -1;
+                    }
+                    long ahead = positionMs - tv;
+                    if (tv >= 0 && (Math.abs(ahead) < SEEK_MIN_MS || (forward && ahead < SKIP_MIN_MS))) {
+                        Log.d("TV at " + tv + " ms, the seek to " + positionMs + " ms is not worth a hitch: not sent");
+                        return;
                     }
                     r.seek(positionMs, !"PAUSED_PLAYBACK".equals(rendererState));
                 }, "PLAYING", "PAUSED_PLAYBACK");
@@ -455,6 +470,7 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 RendererExtras.baseUrl = r.baseUrl;
                 if (Captions.enabled(context) && !audioOnly()) addCaptions(info.videoId, track, r.baseUrl);
                 if (RendererExtras.wanted(device)) {
+                    RendererExtras.takeSkipping(device);
                     // Published before the load, so the renderer finds it right away.
                     track.extrasUrl = r.baseUrl + RendererExtras.path(info.videoId);
                     extrasDurationMs = track.durationMs;
@@ -485,7 +501,15 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
 
                 // Continue where the phone is.
                 long position = local.positionOf(info.videoId);
-                if (!live && position > START_POSITION_MS) {
+                // An intro segment Morphe skips (from 0): the TV starts after it right away, a
+                // seek while it still holds the start costs nothing visible, unlike the skip
+                // following once it plays.
+                long intro = live ? 0 : introEnd(info.videoId);
+                if (intro > position + 500) {
+                    Log.i("Starts after the intro segment, at " + intro + " ms");
+                    position = intro;
+                }
+                if (!live && (position > START_POSITION_MS || position == intro && intro > 0)) {
                     r.seek(position, local.stateCode() == PlaybackState.STATE_NONE || local.isPlaying());
                 }
                 // The phone reports "paused" for a moment while switching titles, so only
@@ -531,8 +555,8 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             }
         }
         if (pick == null) return;
-        if (srt || samsung) track.captionSrt = baseUrl + Captions.path(videoId, pick, "srt");
-        if (vtt && !srt) track.captionVtt = baseUrl + Captions.path(videoId, pick, "vtt");
+        if (srt || samsung) track.captionSrt = baseUrl + Captions.url(videoId, pick, "srt");
+        if (vtt && !srt) track.captionVtt = baseUrl + Captions.url(videoId, pick, "vtt");
         track.captionSamsung = samsung;
         Log.i("Captions " + pick + " sent with " + videoId);
     }
@@ -846,13 +870,26 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         String video = loadedVideoId;
         if (!musicApp || video == null || !RendererExtras.wanted(device)) return;
         MusicLyrics.Snapshot s = MusicLyrics.read(video);
-        String key = s == null ? null : video + "/" + s.state + "/" + System.identityHashCode(s.identity);
+        // Morphe's timing on the video can come later (the segments) or change (the user's offset).
+        String key = s == null ? null : video + "/" + s.state + "/" + System.identityHashCode(s.identity)
+                + "/" + s.mapping;
         if (key == null || key.equals(lyricsKey)) return;
         lyricsKey = key;
         if (s.hasLines()) Captions.putLyrics(video, MusicLyrics.cues(s));
         Log.d("Lyrics for " + video + ": " + s.state + (s.hasLines() ? ", " + s.lines.size() + " lines from "
-                + s.provider + (s.synced ? ", timed" : ", untimed") : ""));
+                + s.provider + (s.synced ? ", timed" : ", untimed")
+                + (s.mapping.isEmpty() ? "" : ", on the video " + s.mapping) : ""));
         RendererExtras.publish(video, extrasDurationMs, false);
+    }
+
+    /** The end of a segment from the title's start that Morphe skips on its own, or 0. */
+    private long introEnd(String videoId) {
+        if (!videoId.equals(SponsorBlock.videoId())) return 0;
+        // Any thread: Morphe's segments directly (not the main thread's copy).
+        for (SponsorBlock.Segment s : SponsorBlock.segments()) {
+            if (s.autoSkip && s.start <= INTRO_START_MS && s.end > s.start) return s.end;
+        }
+        return 0;
     }
 
     /** The segment SponsorBlock skips when it seeks to this position (its end), or null. */
