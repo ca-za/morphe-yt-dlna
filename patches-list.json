@@ -1,6 +1,6 @@
 {
   "NOTE": "Do NOT manually edit this file. This file is automatically updated when semantic release (release.yml) runs. Manually editing this file can break your releases and break third party tools that use this file.",
-  "version": "0.1.12-alpha",
+  "version": "0.1.13-alpha",
   "patches": [
     {
       "name": "DLNA Sonos rooms",
@@ -37,7 +37,7 @@
             {
               "version": "21.30.216",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 29,
               "description": null
             },
@@ -107,7 +107,7 @@
             {
               "version": "9.30.53",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 26,
               "description": null
             },
@@ -165,7 +165,7 @@
             {
               "version": "21.30.216",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 29,
               "description": null
             },
@@ -235,7 +235,7 @@
             {
               "version": "9.30.53",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 26,
               "description": null
             },
@@ -306,7 +306,7 @@
             {
               "version": "21.30.216",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 29,
               "description": null
             },
@@ -376,7 +376,7 @@
             {
               "version": "9.30.53",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 26,
               "description": null
             },
@@ -451,7 +451,7 @@
             {
               "version": "9.30.53",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 26,
               "description": null
             },
@@ -509,7 +509,7 @@
             {
               "version": "21.30.216",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 29,
               "description": null
             },
@@ -581,7 +581,7 @@
             {
               "version": "21.30.216",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 29,
               "description": null
             },
@@ -651,7 +651,7 @@
             {
               "version": "9.30.53",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 26,
               "description": null
             },
@@ -709,7 +709,7 @@
             {
               "version": "21.30.216",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 29,
               "description": null
             },
@@ -779,7 +779,7 @@
             {
               "version": "9.30.53",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 26,
               "description": null
             },
@@ -844,7 +844,7 @@
             {
               "version": "9.30.53",
               "versionCodes": null,
-              "isExperimental": true,
+              "isExperimental": false,
               "minSdk": 26,
               "description": null
             },

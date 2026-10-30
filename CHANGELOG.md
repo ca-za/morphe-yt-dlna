@@ -1,3 +1,13 @@
+## [0.1.13-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.12-alpha...v0.1.13-alpha) (2026-10-30)
+
+### 🐛 Bug Fixes
+
+* rooms added or removed on the TV show in the cast dialog ([5bb8a32](https://github.com/ca-za/morphe-yt-dlna/commit/5bb8a3280979f78f6f01452dcb9e19edd8842d51))
+
+### 🚀 Updated App Support
+
+* YouTube 21.30.216 and YouTube Music 9.30.53 recommended ([9e58c4e](https://github.com/ca-za/morphe-yt-dlna/commit/9e58c4e025a235707fa34dabca8f09daf26de8c8))
+
 ## [0.1.12-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.11-alpha...v0.1.12-alpha) (2026-10-30)
 
 ### 🚀 Updated App Support
