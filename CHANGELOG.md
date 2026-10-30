@@ -1,3 +1,9 @@
+## [0.1.11-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.10-alpha...v0.1.11-alpha) (2026-10-30)
+
+### 🐛 Bug Fixes
+
+* DLNA cast patches YouTube 21.23 ([f690c55](https://github.com/ca-za/morphe-yt-dlna/commit/f690c5573dd526c383f3a5760206c35fa69fab82))
+
 ## [0.1.10-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.9-alpha...v0.1.10-alpha) (2026-10-30)
 
 ### ✨ New Features
