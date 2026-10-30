@@ -601,7 +601,12 @@ def tv_next(ctx: Context) -> Result:
         raise Skip("renderer has no playlist")
     before = ctx.control.status().get("currentVideoId")
     ctx.renderer.next()
-    status = ctx.control.wait_status(lambda s: s.get("currentVideoId") not in (None, before), 20)
+    status = ctx.control.wait_status(lambda s: s.get("currentVideoId") not in (None, before), 12)
+    if status.get("currentVideoId") in (None, before):
+        # A Next while the phone rebuilds the TV's playlist (right after a skip) finds no next
+        # track: once more.
+        ctx.renderer.next()
+        status = ctx.control.wait_status(lambda s: s.get("currentVideoId") not in (None, before), 15)
     after = status.get("currentVideoId")
     if after == before:
         return Result("fail", "phone did not follow the renderer")
@@ -786,6 +791,10 @@ def scrubber_seek(ctx: Context) -> Result:
     moved = target is not None and until(lambda: abs(ctx.renderer.position_ms() - target) < 8000, 12)
     evidence = {"before": before, "intent": intent.group(0) if intent else None,
                 "sent": sent.group(0) if sent else None, "after": ctx.renderer.position_ms()}
+    # The tap that shows the controls may hit play/pause: later scenarios expect it playing.
+    if ctx.logs.find_all(r"Phone pause by ui", since):
+        ctx.control.local("play")
+        renderer_state_is(ctx, "PLAYING", 8)
     if not intent:
         return Result("fail", "the phone's player got no seek", evidence)
     problems = [p for p, bad in [("seek not sent to the TV", not sent), ("TV not at the new position", not moved)] if bad]
