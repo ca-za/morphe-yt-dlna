@@ -440,11 +440,12 @@ public final class DlnaCast {
             if (!seen.add(deviceKey(device))) return;
             devices.add(device);
             rebuild.run();
-            if (RendererZones.has(device) && RendererZones.cached(device) == null) {
+            // Every time the picker opens: rooms may have joined or left on the TV meanwhile. Cheap,
+            // the renderer answers empty when nothing changed (then nothing is rebuilt).
+            if (RendererZones.has(device)) {
                 background.execute(() -> {
                     try {
-                        RendererZones.refresh(device);
-                        main.post(rebuild);
+                        if (RendererZones.refresh(device) != null) main.post(rebuild);
                     } catch (Exception e) {
                         Log.d("Renderer rooms not read: " + e);
                     }
