@@ -94,9 +94,9 @@ final class DevicePicker {
 
     /**
      * A volume slider in the sheet's colors (the app's theme may give old Holo sliders),
-     * {@code onSet} called when it's released.
+     * {@code onSet} called when it's released; {@code label} (may be null) shows the value.
      */
-    android.widget.SeekBar slider(int value, String description, java.util.function.IntConsumer onSet) {
+    android.widget.SeekBar slider(int value, String description, TextView label, java.util.function.IntConsumer onSet) {
         android.widget.SeekBar slider = new android.widget.SeekBar(activity);
         slider.setMax(100);
         slider.setProgress(value);
@@ -130,6 +130,7 @@ final class DevicePicker {
         slider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(android.widget.SeekBar bar, int progress, boolean fromUser) {
+                if (label != null) label.setText(String.valueOf(progress));
             }
 
             @Override
@@ -273,8 +274,20 @@ final class DevicePicker {
             LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
             iconParams.rightMargin = dp(24);
             view.addView(icon, iconParams);
-            view.addView(slider(row.volume, row.text, row.onVolume),
+            // The value right of the slider, wide enough for "100" so the slider doesn't jump.
+            TextView value = new TextView(activity);
+            value.setText(String.valueOf(row.volume));
+            value.setTextColor(secondaryColor);
+            value.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            value.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            value.setMinWidth(dp(32));
+            value.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            view.addView(slider(row.volume, row.text, value, row.onVolume),
                     new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            LinearLayout.LayoutParams valueParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            valueParams.leftMargin = dp(8);
+            view.addView(value, valueParams);
             return view;
         }
         LinearLayout view = new LinearLayout(activity);
