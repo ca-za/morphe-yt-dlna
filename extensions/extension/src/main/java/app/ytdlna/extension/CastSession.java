@@ -514,7 +514,14 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
                 }
                 // The phone reports "paused" for a moment while switching titles, so only
                 // mirror a pause that is still there once the switch has settled.
-                main.postDelayed(() -> mirrorPauseAfterLoad(info.videoId), LOAD_SETTLE_MS);
+                // Only for the cast's first title: the phone may have been paused when the cast
+                // started. Later, a pause the user makes reaches the renderer as a command; a
+                // pause the phone shows after a title change (the app switching, our own pause
+                // following the renderer) is none, and the sync resumes the phone instead.
+                if (!firstTitleLoaded) {
+                    firstTitleLoaded = true;
+                    main.postDelayed(() -> mirrorPauseAfterLoad(info.videoId), LOAD_SETTLE_MS);
+                }
                 // The app switched song/video while this title loaded (starting an album does):
                 // once more in the format it plays now.
                 if (musicApp && audio != audioOnly()) {
@@ -561,7 +568,10 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         Log.i("Captions " + pick + " sent with " + videoId);
     }
 
-    /** A pause that is still there on the phone after loading a title (and any reload) is applied. */
+    /** The cast loaded its first title (see {@link #mirrorPauseAfterLoad}). Renderer thread. */
+    private boolean firstTitleLoaded;
+
+    /** A pause that is still there on the phone after loading the cast's first title is applied. */
     private void mirrorPauseAfterLoad(String videoId) {
         if (stopped || !videoId.equals(loadedVideoId)) return;
         long wait = local.reloadRemaining();
