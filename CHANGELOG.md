@@ -1,3 +1,11 @@
+## [0.1.14-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.13-alpha...v0.1.14-alpha) (2026-10-30)
+
+### 🐛 Bug Fixes
+
+* the TV no longer pauses a few seconds after a song change ([575f99c](https://github.com/ca-za/morphe-yt-dlna/commit/575f99c0253d8469e206940b107593df83a22c3c))
+* lyrics on music videos in time, and no seek hitch after a song starts ([f9469f0](https://github.com/ca-za/morphe-yt-dlna/commit/f9469f0f71320ee085feeeca102c7dc5efa0435b))
+* another app taking the audio focus no longer pauses the TV ([1f4890b](https://github.com/ca-za/morphe-yt-dlna/commit/1f4890b95fb4be1572ff16cc01311291781ef3e8))
+
 ## [0.1.13-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.12-alpha...v0.1.13-alpha) (2026-10-30)
 
 ### 🐛 Bug Fixes
