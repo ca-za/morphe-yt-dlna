@@ -45,6 +45,18 @@ public final class CastAudio {
         return muted ? track.setStereoVolume(0f, 0f) : track.setStereoVolume(left, right);
     }
 
+    /**
+     * Injection point: start of every {@code onAudioFocusChange(int)} in the app. While the app is
+     * silent for a cast, a focus change (another app such as Sonos opening, the system) must not
+     * pause or duck it: its player would pass that pause on to the TV. Returns 0 to drop the
+     * change (no focus constant is 0), else the change unchanged.
+     */
+    public static int onAudioFocusChange(int focusChange) {
+        if (!muted) return focusChange;
+        Log.d("Audio focus change " + focusChange + " ignored while casting");
+        return 0;
+    }
+
     static boolean isMuted() {
         return muted;
     }

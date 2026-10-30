@@ -199,6 +199,23 @@ final class TestHooks {
                     result.put("ok", true);
                     break;
                 }
+                case "takeAudioFocus": {
+                    // Like another app opening (the Sonos app): takes the audio focus for "ms",
+                    // then gives it back. The app's player loses it meanwhile.
+                    android.media.AudioManager audio = context.getSystemService(android.media.AudioManager.class);
+                    android.media.AudioFocusRequest request = new android.media.AudioFocusRequest.Builder(
+                            android.media.AudioManager.AUDIOFOCUS_GAIN)
+                            .setAudioAttributes(new android.media.AudioAttributes.Builder()
+                                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                            .setOnAudioFocusChangeListener(change -> { })
+                            .build();
+                    int granted = audio.requestAudioFocus(request);
+                    long ms = Long.parseLong(intent.getStringExtra("ms") == null ? "3000" : intent.getStringExtra("ms"));
+                    main.postDelayed(() -> audio.abandonAudioFocusRequest(request), ms);
+                    result.put("ok", granted == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED);
+                    break;
+                }
                 case "rescan":
                     // Searches now; the result shows in "status" (renderers) after about 3 s.
                     RendererScanner.scanNow();

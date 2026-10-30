@@ -30,6 +30,11 @@ private const val TEST_HOOKS_CLASS = "Lapp/ytdlna/extension/TestHooks;"
 private const val INTENTS_CLASS = "Lapp/ytdlna/extension/PlayerIntents;"
 private const val CAPTIONS_CLASS = "Lapp/ytdlna/extension/Captions;"
 private const val AUDIO_TRACK = "Landroid/media/AudioTrack;"
+private const val FOCUS_LISTENER = "Landroid/media/AudioManager\$OnAudioFocusChangeListener;"
+
+private fun isFocusChange(method: com.android.tools.smali.dexlib2.iface.Method) =
+    method.name == "onAudioFocusChange" && method.returnType == "V" &&
+        method.parameterTypes.map { it.toString() } == listOf("I") && method.implementation != null
 private const val MEDIA_SESSION = "Landroid/media/session/MediaSession;"
 
 /** `new MediaSession(...)`: the constructor call, with the new session in its first register. */
@@ -311,6 +316,31 @@ val dlnaCastPatch = bytecodePatch(
     finalize {
         if (classDefByOrNull("Lapp/morphe/extension/shared/Utils;") == null) {
             throw PatchException("$REQUIRES_OFFICIAL_PATCHES (Morphe extension missing)")
+        }
+
+        // Audio focus while casting: the app is silent then, so another app taking the focus
+        // (the Sonos app opening, the system) must not pause it; its player would pass that
+        // pause on to the TV as the user's. CastAudio drops focus changes while it mutes.
+        // Here, after all patches: an official one edits YouTube's listener by index, and
+        // would replace our first instruction instead (the app then fails to verify).
+        classDefForEach { classDef ->
+            if (classDef.type.startsWith("Lapp/ytdlna/")) return@classDefForEach
+            if (FOCUS_LISTENER !in classDef.interfaces) return@classDefForEach
+            if (classDef.methods.none(::isFocusChange)) return@classDefForEach
+            mutableClassDefBy(classDef.type).methods.filter(::isFocusChange).forEach { method ->
+                // p1: the change. 0 back means drop it.
+                method.addInstructionsWithLabels(
+                    0,
+                    """
+                        invoke-static/range { p1 .. p1 }, $AUDIO_CLASS->onAudioFocusChange(I)I
+                        move-result p1
+                        if-nez p1, :focus_change
+                        return-void
+                        :focus_change
+                        nop
+                    """
+                )
+            }
         }
     }
 

@@ -1340,6 +1340,27 @@ def media_session(ctx: Context) -> Result:
 
 
 # Order matters: later scenarios build on the state earlier ones leave.
+def focus_loss(ctx: Context) -> Result:
+    """Another app taking the audio focus (like the Sonos app opening) pauses neither the
+    phone's player nor the TV while casting."""
+    if ctx.renderer.state() != "PLAYING":
+        ctx.renderer.play()
+        renderer_state_is(ctx, "PLAYING", 8)
+    since = ctx.logs.mark()
+    taken = ctx.control.cmd("takeAudioFocus", ms="4000")
+    time.sleep(7)
+    ignored = ctx.logs.find_all(r"Audio focus change -?\d+ ignored while casting", since)
+    pauses = ctx.logs.find_all(r"Phone pause by .*sent to the renderer", since)
+    playing = renderer_state_is(ctx, "PLAYING", 8)
+    evidence = {"granted": taken.get("ok"), "ignored": ignored[:3], "pauses": pauses[:3],
+                "renderer": ctx.renderer.state()}
+    if not taken.get("ok"):
+        return Result("env", "audio focus not granted", evidence)
+    problems = [p for p, bad in [("a pause reached the TV", pauses), ("TV not playing", not playing),
+                                 ("focus change not seen", not ignored)] if bad]
+    return Result("fail" if problems else "pass", ", ".join(problems), evidence)
+
+
 SCENARIOS = [
     ("launch", launch, {"yt", "music"}),
     ("stream_capture", stream_capture, {"yt", "music"}),
@@ -1361,6 +1382,7 @@ SCENARIOS = [
     ("ui_controls", ui_controls, {"yt", "music"}),
     ("scrubber_seek", scrubber_seek, {"yt", "music"}),
     ("volume_keys", volume_keys, {"yt", "music"}),
+    ("focus_loss", focus_loss, {"yt", "music"}),
     ("phone_next", phone_next, {"music"}),
     ("tv_next", tv_next, {"music"}),
     ("song_mode", song_mode, {"music"}),
