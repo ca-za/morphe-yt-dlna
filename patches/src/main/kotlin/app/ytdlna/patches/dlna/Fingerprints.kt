@@ -81,9 +81,14 @@ internal fun routeAvailableCall(instruction: com.android.tools.smali.dexlib2.ifa
  * video that is actually playing, since ads and preloaded videos are captured as well.
  */
 internal object VideoLoadFingerprint : Fingerprint(
-    // Returns an object since Music 9.4x, void before.
-    parameters = listOf("L", "Ljava/lang/String;"),
-    strings = listOf("Null initialPlayabilityStatus")
+    // Returns an object since Music 9.4x, void before. YouTube 21.23 has a third parameter, a
+    // boolean (not before or after it); only the first one is used.
+    strings = listOf("Null initialPlayabilityStatus"),
+    custom = { method, _ ->
+        val parameters = method.parameterTypes.map { it.toString() }
+        parameters.size in 2..3 && parameters[0].startsWith("L") && parameters[1] == "Ljava/lang/String;" &&
+            parameters.getOrNull(2).let { it == null || it == "Z" }
+    }
 )
 
 /**
