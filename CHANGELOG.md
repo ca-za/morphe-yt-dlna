@@ -1,3 +1,11 @@
+## [0.1.10-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.9-alpha...v0.1.10-alpha) (2026-10-30)
+
+### ✨ New Features
+
+* the stream's frame rate in the DASH and HLS manifests ([3216a47](https://github.com/ca-za/morphe-yt-dlna/commit/3216a479eef9d6726e4913cf4a4288cb96296f49))
+* the cast dialog's volume slider shows its value ([67e4eaf](https://github.com/ca-za/morphe-yt-dlna/commit/67e4eaf55f732ca7b224d53aeed44440f1681e2e))
+* a volume slider in the cast dialog ([33a0685](https://github.com/ca-za/morphe-yt-dlna/commit/33a068546872181ac75a1343e9249292056cac1d))
+
 ## [0.1.9-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.8-alpha...v0.1.9-alpha) (2026-10-29)
 
 ### ✨ New Features
