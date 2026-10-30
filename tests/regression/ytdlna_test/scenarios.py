@@ -1244,6 +1244,10 @@ def avtransport_next(ctx: Context) -> Result:
         total = (int(h) * 3600 + int(m) * 60 + int(sec)) * 1000
         if total <= 10_000:
             return Result("fail", f"current title has no usable duration ({duration})", evidence)
+        # The app's queue can still change after the cast started (a radio refills it): the
+        # renderer then got another next title. The one it holds right before the end counts.
+        upcoming = ctx.renderer.next_metadata(avtransport=True) or upcoming
+        evidence["next"] = upcoming
         ctx.renderer.seek_ms(total - 6000)
         moved = ctx.logs.wait(r"Renderer moved on to the next title (\S+)", 30, since)
         followed = ctx.logs.wait(r"Phone follows the renderer to (\S+)", 15, since)
