@@ -14,6 +14,7 @@ signed-in Google account on the phone (YouTube Music needs it). See tests/regres
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
@@ -85,6 +86,10 @@ def main() -> int:
         if reports[-1]["verdict"] == "pass" and not args.only:
             _verified(apk)
 
+    # Patched APKs and the bundle copy are 100-150 MB each and can be rebuilt: keep only the reports.
+    if not os.environ.get("YTDLNA_KEEP_APKS"):
+        for big in [*run_dir.rglob("*.apk"), bundle]:
+            big.unlink(missing_ok=True)
     runner.summary(reports, run_dir / "summary.md")
     print(f"\nSummary: {run_dir / 'summary.md'}")
     return 0 if all(r["verdict"] == "pass" for r in reports) else 1
