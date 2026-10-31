@@ -217,10 +217,15 @@ abstract class Renderer {
 
     /** Makes {@link #autoUri} serve the video's media. */
     void registerAuto(StreamInfo info) {
+        registerAuto(info, info.videoId);
+    }
+
+    /** Makes the {@link #autoUri} of {@code entryId} (the video's, or a placeholder's) serve it. */
+    void registerAuto(StreamInfo info, String entryId) {
         StreamProxy.Media media = StreamProxy.choose(info, device, audioOnly.getAsBoolean());
         if (media == null) return;
         StreamProxy.register(info);
-        StreamProxy.alias(info, media, autoPath(info.videoId));
+        StreamProxy.alias(info, media, autoPath(entryId));
     }
 
     // endregion

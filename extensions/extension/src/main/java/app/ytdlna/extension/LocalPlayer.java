@@ -81,7 +81,8 @@ final class LocalPlayer {
 
         @Override
         public void onQueueChanged(List<MediaSession.QueueItem> queue) {
-            listener.onQueue(readQueue(queue));
+            // With the active item, so the playing title is found under another id too.
+            listener.onQueue(markActive(readQueue(queue), controller));
         }
 
         @Override
@@ -288,21 +289,29 @@ final class LocalPlayer {
     /** The app's queue, read now. */
     List<QueueEntry> queue() {
         MediaController c = controller;
+        return markActive(readQueue(c == null ? null : c.getQueue()), c);
+    }
+
+    private static List<QueueEntry> markActive(List<QueueEntry> entries, MediaController c) {
         PlaybackState state = c == null ? null : c.getPlaybackState();
-        List<QueueEntry> entries = readQueue(c == null ? null : c.getQueue());
         long active = state == null ? -1 : state.getActiveQueueItemId();
         for (QueueEntry entry : entries) entry.active = entry.queueId == active;
         return entries;
     }
 
     /**
-     * Position of the playing title in {@code queue}, -1 if not there. By its id, or else the
-     * active item: YouTube Music may queue the song version of a playing video under another id.
+     * Position of the playing title in {@code queue}, -1 if not there. By its id, a show's by its
+     * title, or else the active item: YouTube Music may queue the song version of a playing video
+     * under another id.
      */
     static int indexOfPlaying(List<QueueEntry> queue, String videoId) {
         for (int i = 0; i < queue.size(); i++) {
             if (queue.get(i).videoId.equals(videoId)) return i;
         }
+        // A show's title, by its title: the active item can be a neighbour while the app reloads.
+        StreamInfo info = StreamCapture.get(videoId);
+        QueueEntry placeholder = info == null ? null : placeholderOf(queue, info);
+        if (placeholder != null) return queue.indexOf(placeholder);
         for (int i = 0; i < queue.size(); i++) {
             if (queue.get(i).active) return i;
         }
@@ -313,7 +322,11 @@ final class LocalPlayer {
         return entries.get(videoId);
     }
 
-    /** The video id is the media id, or part of the thumbnail URL. */
+    /**
+     * The video id is the media id, or part of the thumbnail URL. YouTube Music's shows
+     * (audiobooks, podcasts) have neither: their items get a {@link #placeholder} id, which the
+     * renderer playlist takes like any other; the phone plays the item when the renderer wants it.
+     */
     private List<QueueEntry> readQueue(List<MediaSession.QueueItem> queue) {
         List<QueueEntry> result = new ArrayList<>();
         if (queue == null) return result;
@@ -321,6 +334,8 @@ final class LocalPlayer {
             MediaDescription description = item.getDescription();
             String mediaId = description.getMediaId();
             String icon = description.getIconUri() == null ? "" : description.getIconUri().toString();
+            String title = description.getTitle() == null ? "" : description.getTitle().toString();
+            String artist = description.getSubtitle() == null ? "" : description.getSubtitle().toString();
             String videoId = null;
             if (mediaId != null && VIDEO_ID.matcher(mediaId).matches()) {
                 videoId = mediaId;
@@ -328,15 +343,45 @@ final class LocalPlayer {
                 Matcher m = THUMBNAIL_VIDEO_ID.matcher(icon);
                 if (m.find()) videoId = m.group(1);
             }
-            if (videoId == null) continue;
-            QueueEntry entry = new QueueEntry(item.getQueueId(), videoId,
-                    description.getTitle() == null ? "" : description.getTitle().toString(),
-                    description.getSubtitle() == null ? "" : description.getSubtitle().toString(),
-                    icon);
+            if (videoId == null) {
+                if (title.isEmpty()) continue;
+                videoId = placeholder(item.getQueueId(), title);
+            }
+            QueueEntry entry = new QueueEntry(item.getQueueId(), videoId, title, artist, icon);
             result.add(entry);
             entries.put(videoId, entry);
         }
         return result;
+    }
+
+    /**
+     * Id of a queue item without a video id: its queue id and title (queue ids repeat in a new
+     * queue). A '.' never occurs in video ids.
+     */
+    private static String placeholder(long queueId, String title) {
+        return "item." + queueId + "." + Integer.toHexString(title.hashCode());
+    }
+
+    static boolean isPlaceholder(String videoId) {
+        return videoId.startsWith("item.");
+    }
+
+    /**
+     * The placeholder entry of {@code queue} that is the title {@code info} (same title and artist,
+     * the active one first), null if none.
+     */
+    static QueueEntry placeholderOf(List<QueueEntry> queue, StreamInfo info) {
+        if (queue == null) return null;
+        QueueEntry found = null;
+        for (QueueEntry entry : queue) {
+            if (!isPlaceholder(entry.videoId) || !entry.title.equals(info.title)) continue;
+            String a = entry.artist.toLowerCase(java.util.Locale.ROOT);
+            String c = info.channel.toLowerCase(java.util.Locale.ROOT);
+            if (!a.isEmpty() && !c.isEmpty() && !a.contains(c) && !c.contains(a)) continue;
+            if (entry.active) return entry;
+            if (found == null) found = entry;
+        }
+        return found;
     }
 
     // endregion

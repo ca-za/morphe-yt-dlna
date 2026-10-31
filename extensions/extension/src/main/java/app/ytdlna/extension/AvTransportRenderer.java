@@ -143,7 +143,8 @@ final class AvTransportRenderer extends Renderer {
         if (nextUnsupported || entries == null || current == null) return;
         int playing = LocalPlayer.indexOfPlaying(entries, current);
         LocalPlayer.QueueEntry next = playing >= 0 && playing + 1 < entries.size() ? entries.get(playing + 1) : null;
-        if (next == null || next.videoId.equals(nextVideoId)) return;
+        // A show's title without a video id: the phone moves on by itself (not gapless).
+        if (next == null || next.videoId.equals(nextVideoId) || LocalPlayer.isPlaceholder(next.videoId)) return;
         StreamInfo captured = StreamCapture.get(next.videoId);
         if (captured != null) registerAuto(captured);
         Track track = Track.fromQueue(next);

@@ -127,6 +127,7 @@ final class OpenHomeRenderer extends Renderer {
         registerAuto(load.info);
         if (!playlistStarted) startPlaylist(load);
         Integer queued = trackIdByVideo.get(load.info.videoId);
+        if (queued == null) queued = fromPlaceholder(load);
         int trackId;
         if (queued == null) {
             trackId = insert(currentTrackId, load.track, load.art);
@@ -149,6 +150,22 @@ final class OpenHomeRenderer extends Renderer {
             OpenHome.seekId(device, trackId);
         }
         OpenHome.play(device);
+    }
+
+    /**
+     * The renderer entry of a show's title queued under its placeholder (its queue item had no
+     * video id): it becomes the title's entry, its address serves the title's streams. Null if
+     * there is none.
+     */
+    private Integer fromPlaceholder(Load load) {
+        LocalPlayer.QueueEntry entry = LocalPlayer.placeholderOf(load.queue, load.info);
+        Integer trackId = entry == null ? null : trackIdByVideo.get(entry.videoId);
+        if (trackId == null) return null;
+        registerAuto(load.info, entry.videoId);
+        trackIdByVideo.put(load.info.videoId, trackId);
+        videoByTrackId.put(trackId, load.info.videoId);
+        Log.d("Renderer track " + trackId + " of " + entry.videoId + " is " + load.info.videoId);
+        return trackId;
     }
 
     private static boolean hasCaptions(Track track) {
@@ -190,11 +207,12 @@ final class OpenHomeRenderer extends Renderer {
         if (playing < 0) {
             // The app is still building its queue (as while it reloads the title): entries placed
             // now would end up before the playing title. The next queue update adds them.
-            Log.d("Playing title " + playingVideo + " not in the app's queue yet");
+            Log.d("Playing title " + playingVideo + " not in the app's queue yet (" + queue.size() + " entries)");
             return false;
         }
         String alias = queue.get(playing).videoId;
-        if (!alias.equals(playingVideo)) {
+        Integer aliasTrack = trackIdByVideo.get(alias);
+        if (!alias.equals(playingVideo) && (aliasTrack == null || aliasTrack != currentTrackId)) {
             // The playing title under another id in the queue: it is on the renderer already.
             // Only while the phone still plays it; once it moved on, the active entry is
             // another title (it gets its own entry).
