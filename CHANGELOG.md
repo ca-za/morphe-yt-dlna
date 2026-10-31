@@ -1,3 +1,10 @@
+## [0.1.15-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.14-alpha...v0.1.15-alpha) (2026-10-31)
+
+### 🐛 Bug Fixes
+
+* audiobooks and podcasts in YouTube Music: the whole queue reaches the renderer ([b6b9d5f](https://github.com/ca-za/morphe-yt-dlna/commit/b6b9d5f869f05e79a81a2adedb298afd505bd02b))
+* year and label for every title in the renderer playlist and Up next, not only the first ([fadf49d](https://github.com/ca-za/morphe-yt-dlna/commit/fadf49da29b72bb5b45b6d68c386e876881a989e))
+
 ## [0.1.14-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.13-alpha...v0.1.14-alpha) (2026-10-30)
 
 ### 🐛 Bug Fixes
