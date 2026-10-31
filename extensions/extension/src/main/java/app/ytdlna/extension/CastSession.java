@@ -780,9 +780,21 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
             return;
         }
         pendingFollow = null;
-        ignorePositionUntil = SystemClock.elapsedRealtime() + LOAD_SETTLE_MS;
-        if (local.skipTo(videoId)) Log.i("Phone follows the renderer to " + videoId);
+        long now = SystemClock.elapsedRealtime();
+        // The renderer's track change and its request for the streams both ask for it: a second
+        // skip to the same item would start the app's load again.
+        if (videoId.equals(followedVideoId) && now - followedAt < LOAD_SETTLE_MS) return;
+        ignorePositionUntil = now + LOAD_SETTLE_MS;
+        if (local.skipTo(videoId)) {
+            followedVideoId = videoId;
+            followedAt = now;
+            Log.i("Phone follows the renderer to " + videoId);
+        }
     }
+
+    /** The title the phone last moved to for the renderer, and when. */
+    private String followedVideoId;
+    private long followedAt;
 
     /**
      * Keeps the phone at the renderer's position and play state, since the renderer is what is

@@ -222,19 +222,25 @@ final class OpenHomeRenderer extends Renderer {
             }
             trackIdByVideo.put(alias, currentTrackId);
         }
-        List<Track> missing = new ArrayList<>();
-        for (LocalPlayer.QueueEntry entry : queue) {
-            if (!trackIdByVideo.containsKey(entry.videoId) && !refused.contains(entry.videoId)) {
-                missing.add(Track.fromQueue(entry));
-            }
-        }
-        if (missing.isEmpty()) return false;
-        covers.prefetch(missing);
+        // Another album or show was started: the old titles leave the renderer playlist, so the
+        // new queue is not built around them.
+        int changes = removeOldQueue(queue);
+        if (changes == INSERTS_PER_CALL) return true;
         // The titles after the playing one first (the next one is needed soonest), then those before.
         List<Integer> order = new ArrayList<>();
         for (int i = playing + 1; i < queue.size(); i++) order.add(i);
         for (int i = 0; i < Math.max(playing, 0); i++) order.add(i);
-        int inserts = 0;
+        List<Track> missing = new ArrayList<>();
+        for (int i : order) {
+            LocalPlayer.QueueEntry entry = queue.get(i);
+            if (!trackIdByVideo.containsKey(entry.videoId) && !refused.contains(entry.videoId)) {
+                missing.add(Track.fromQueue(entry));
+            }
+        }
+        if (missing.isEmpty()) return replacingQueue;
+        // Waits only for the covers of the titles added now; the others load meanwhile.
+        covers.prefetch(missing, INSERTS_PER_CALL - changes);
+        int inserts = changes;
         for (int i : order) {
             LocalPlayer.QueueEntry entry = queue.get(i);
             if (trackIdByVideo.containsKey(entry.videoId) || refused.contains(entry.videoId)) continue;
@@ -256,8 +262,54 @@ final class OpenHomeRenderer extends Renderer {
                 refused.add(entry.videoId);
             }
         }
-        Log.i("Renderer playlist has " + trackIdByVideo.size() + " tracks");
-        return false;
+        Log.i("Renderer playlist has " + videoByTrackId.size() + " tracks");
+        return replacingQueue;
+    }
+
+    /** The renderer playlist still has titles of a queue the app replaced: deleted bit by bit. */
+    private volatile boolean replacingQueue;
+
+    /**
+     * Deletes renderer tracks of the app's previous queue, at most {@link #INSERTS_PER_CALL} per
+     * call; returns how many. Only once the app has a new queue (none of the renderer's other
+     * titles in it): titles the app drops from its queue once played stay, for the TV's "back".
+     */
+    private int removeOldQueue(List<LocalPlayer.QueueEntry> queue) {
+        java.util.Set<String> queued = new java.util.HashSet<>();
+        for (LocalPlayer.QueueEntry entry : queue) queued.add(entry.videoId);
+        // A track can be known under several ids (the queue's and the playing one's).
+        java.util.Set<Integer> wanted = new java.util.HashSet<>();
+        for (Map.Entry<String, Integer> e : trackIdByVideo.entrySet()) {
+            if (queued.contains(e.getKey())) wanted.add(e.getValue());
+        }
+        wanted.add(currentTrackId);
+        List<Integer> old = new ArrayList<>();
+        for (Integer trackId : videoByTrackId.keySet()) {
+            if (!wanted.contains(trackId)) old.add(trackId);
+        }
+        if (old.isEmpty()) {
+            replacingQueue = false;
+            return 0;
+        }
+        if (!replacingQueue) {
+            if (wanted.size() > 1) return 0;
+            replacingQueue = true;
+            Log.i("New queue in the app: removing " + old.size() + " old titles from the renderer playlist");
+        }
+        int removed = 0;
+        for (Integer trackId : old) {
+            if (removed == INSERTS_PER_CALL) break;
+            removed++;
+            try {
+                OpenHome.deleteId(device, trackId);
+            } catch (Exception e) {
+                Log.d("Removing renderer track " + trackId + " failed: " + e.getMessage());
+            }
+            videoByTrackId.remove(trackId);
+            trackIdByVideo.values().removeIf(id -> id.equals(trackId));
+        }
+        if (removed == old.size()) replacingQueue = false;
+        return removed;
     }
 
     @Override

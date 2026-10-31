@@ -51,9 +51,17 @@ final class Covers {
 
     /** Looks up covers, year and label of several tracks in parallel, so later calls find them cached. */
     void prefetch(List<Track> tracks) {
+        prefetch(tracks, tracks.size());
+    }
+
+    /**
+     * Like {@link #prefetch(List)}, but waits only for the first {@code waitFor} tracks: the
+     * others are looked up in the background.
+     */
+    void prefetch(List<Track> tracks, int waitFor) {
         if (!lookupEnabled() || tracks.isEmpty()) return;
         List<String[]> items = new ArrayList<>();
         for (Track track : tracks) items.add(new String[]{track.title, track.artist});
-        AlbumArt.prefetch(items, 4000);
+        AlbumArt.prefetch(items, waitFor, 4000);
     }
 }

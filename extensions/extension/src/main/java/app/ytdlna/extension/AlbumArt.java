@@ -16,7 +16,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -128,28 +127,45 @@ final class AlbumArt {
         return known != null ? known : new String[]{match.year, ""};
     }
 
+    /** Lookups started by {@link #prefetch} and not finished yet, by title key. */
+    private static final Map<String, java.util.concurrent.Future<?>> inFlight = new ConcurrentHashMap<>();
+
     /**
-     * Looks up several titles in parallel, and for sure matches also their album's year and label,
-     * waiting at most {@code timeoutMs} in total.
+     * Looks up titles in the background, in their order, and for sure matches also their album's
+     * year and label. Waits for the first {@code waitFor} of them, at most {@code timeoutMs} in
+     * total; the others go on (a later call finds them cached or still running, not again).
      */
-    static void prefetch(List<String[]> titlesAndArtists, long timeoutMs) {
-        List<Callable<Match>> tasks = new ArrayList<>();
-        for (String[] item : titlesAndArtists) {
-            Match known = cache.get(key(item[0], item[1]));
+    static void prefetch(List<String[]> titlesAndArtists, int waitFor, long timeoutMs) {
+        List<java.util.concurrent.Future<?>> waits = new ArrayList<>();
+        for (int i = 0; i < titlesAndArtists.size(); i++) {
+            String[] item = titlesAndArtists.get(i);
+            String key = key(item[0], item[1]);
+            Match known = cache.get(key);
             if (known == NOT_FOUND) continue;
             if (known != null && (!known.isSure() || known.deezerAlbumId.isEmpty()
                     || albumDetails.containsKey(known.deezerAlbumId))) continue;
-            tasks.add(() -> {
-                Match match = lookup(item[0], item[1]);
-                if (match != null && match.isSure()) details(match);
-                return match;
-            });
+            java.util.concurrent.Future<?> running = inFlight.computeIfAbsent(key, k -> lookups.submit(() -> {
+                try {
+                    Match match = lookup(item[0], item[1]);
+                    if (match != null && match.isSure()) details(match);
+                } finally {
+                    inFlight.remove(k);
+                }
+            }));
+            if (i < waitFor) waits.add(running);
         }
-        if (tasks.isEmpty()) return;
-        try {
-            lookups.invokeAll(tasks, timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        for (java.util.concurrent.Future<?> f : waits) {
+            try {
+                f.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (Exception e) {
+                // A failed lookup: no cover for it.
+            }
         }
     }
 
