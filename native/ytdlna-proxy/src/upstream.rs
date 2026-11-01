@@ -2,6 +2,7 @@
 
 use std::io::{self, Read, Write};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, RwLock};
 use std::thread;
 use std::time::Duration;
@@ -36,6 +37,14 @@ pub fn set_user_agent(user_agent: String) {
     *user_agent_lock().write().unwrap_or_else(|e| e.into_inner()) = user_agent;
 }
 
+/// Ask for byte ranges with the `range` URL parameter instead of the Range header. Stream URLs
+/// of YouTube's TV client (as yt-dlp gets them) refuse the header with 403.
+static RANGE_AS_QUERY: AtomicBool = AtomicBool::new(false);
+
+pub fn set_range_as_query(enabled: bool) {
+    RANGE_AS_QUERY.store(enabled, Ordering::Relaxed);
+}
+
 fn user_agent() -> String {
     user_agent_lock().read().unwrap_or_else(|e| e.into_inner()).clone()
 }
@@ -62,11 +71,21 @@ impl Response {
 
 /// One upstream GET. `range` is the raw Range header value, if any.
 pub fn get(url: &str, range: Option<&str>) -> io::Result<Response> {
+    // "bytes=a-b" as URL parameter: the answer is a plain 200 with just these bytes.
+    let query_range = range
+        .filter(|_| RANGE_AS_QUERY.load(Ordering::Relaxed))
+        .and_then(|r| r.strip_prefix("bytes="))
+        .and_then(|r| r.split_once('-'))
+        .and_then(|(a, b)| Some((a.parse::<u64>().ok()?, b.parse::<u64>().ok()?)));
+    let url = match query_range {
+        Some((start, end)) => format!("{url}&range={start}-{end}"),
+        None => url.to_string(),
+    };
     let mut request = agent()
-        .get(url)
+        .get(&url)
         .set("User-Agent", &user_agent())
         .set("Accept-Encoding", "identity");
-    if let Some(range) = range {
+    if let (Some(range), None) = (range, query_range) {
         request = request.set("Range", range);
     }
     let response = match request.call() {
@@ -81,9 +100,19 @@ pub fn get(url: &str, range: Option<&str>) -> io::Result<Response> {
         }
         Err(e) => return Err(io::Error::new(io::ErrorKind::Other, e.to_string())),
     };
+    let content_length = response.header("Content-Length").and_then(|v| v.parse().ok());
+    if let (Some((start, end)), 200) = (query_range, response.status()) {
+        // Answer as the Range header would have been answered (the total is not known).
+        return Ok(Response {
+            status: 206,
+            content_length,
+            content_range: Some(format!("bytes {start}-{end}/*")),
+            reader: Box::new(response.into_reader()),
+        });
+    }
     Ok(Response {
         status: response.status(),
-        content_length: response.header("Content-Length").and_then(|v| v.parse().ok()),
+        content_length,
         content_range: response.header("Content-Range").map(str::to_string),
         reader: Box::new(response.into_reader()),
     })
