@@ -50,7 +50,7 @@ fn main() -> ExitCode {
 fn discover() -> std::io::Result<()> {
     for url in dlna::discover(Duration::from_secs(3))? {
         match dlna::Renderer::open(&url) {
-            Ok(r) => println!("{url}  {}", r.name),
+            Ok(r) => println!("{url}  {}  [{}]", r.name, r.modes().join(", ")),
             Err(e) => println!("{url}  ({e})"),
         }
     }
@@ -63,7 +63,10 @@ fn option<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 
 fn cast(description_url: &str, video_id: &str, args: &[String]) -> std::io::Result<()> {
     let renderer = dlna::Renderer::open(description_url)?;
-    let mode = option(args, "--mode").unwrap_or("hls");
+    let mode = match option(args, "--mode") {
+        Some(mode) => mode,
+        None => renderer.mode_for("video").ok_or_else(|| std::io::Error::other("the renderer plays none of our formats"))?,
+    };
     let host = match option(args, "--host") {
         Some(h) => h.to_string(),
         None => renderer.local_address()?.to_string(),

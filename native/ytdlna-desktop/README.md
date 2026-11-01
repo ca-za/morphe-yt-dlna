@@ -11,14 +11,19 @@ Casts YouTube and YouTube Music from a Mac to DLNA renderers, with a Firefox ext
    Release Firefox keeps unsigned extensions only until it restarts; for a lasting install the
    extension has to be signed (addons.mozilla.org, unlisted) or Firefox Developer Edition /
    ESR with `xpinstall.signatures.required` off.
-3. Open a video on youtube.com or music.youtube.com, click the extension's icon, choose the
-   device, "Diesen Tab abspielen".
+3. Open a video on youtube.com or music.youtube.com and click the cast button in the player
+   (YouTube: next to the subtitles button; YouTube Music: before repeat), or the extension's
+   icon in the toolbar (Firefox puts it in the extensions menu first).
+
+Each renderer is asked for the formats it plays (ConnectionManager GetProtocolInfo) when it is
+found. It gets the best one it lists: HLS up to 1080p, else the 360p MP4, else sound only
+(Sonos). Songs from YouTube Music go out as sound where the renderer plays it. Renderers with
+none of these formats are left out of the menus.
 
 While casting, the tab's player stays muted and paused at the renderer's position. Its play
 button (and a click into the video, space, k) plays or pauses the renderer, its progress bar
 seeks it. At the end of a video the tab moves on to its next title (its queue, autoplay), which
-is then cast. YouTube Music is cast as audio, YouTube as HLS (up to 1080p).
-
+is then cast. 
 The native messaging protocol is described in `src/host.rs`. For a renderer that is not found
 on the network (an emulator), the extension's storage key `host` sets the address the renderer
 reaches this computer at (e.g. `10.0.2.2`).

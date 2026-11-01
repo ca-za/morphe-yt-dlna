@@ -11,6 +11,9 @@ function render(state) {
   select.replaceChildren(...state.renderers.map((r) => new Option(r.name, r.url, false, r.url === state.renderer)));
   if (!state.renderers.length) select.append(new Option(state.searching ? "Suche ..." : "Keine Geräte gefunden", ""));
   $("discover").disabled = state.searching;
+  $("hidden").hidden = !state.unsupported;
+  $("hidden").textContent = state.unsupported === 1 ? "1 Gerät ohne passendes Format ausgeblendet"
+    : `${state.unsupported} Geräte ohne passendes Format ausgeblendet`;
   $("cast").disabled = !state.renderer || !!state.loading;
   $("cast").textContent = state.loading ? "Wird gesendet ..." : "Diesen Tab abspielen";
 

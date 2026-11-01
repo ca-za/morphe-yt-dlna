@@ -6,10 +6,11 @@
 //!
 //! From the extension:
 //!   {"cmd":"discover"}
-//!   {"cmd":"cast","renderer":"<description url>","videoId":"...","mode":"hls|muxed|audio","start":12}
+//!   {"cmd":"cast","renderer":"<description url>","videoId":"...","mode":"video|music|hls|muxed|audio","start":12}
 //!   {"cmd":"play"} {"cmd":"pause"} {"cmd":"seek","seconds":90} {"cmd":"stop"}
 //! To the extension:
-//!   {"type":"renderers","renderers":[{"url":"...","name":"..."}]}
+//!   {"type":"renderers","renderers":[{"url":"...","name":"...","modes":["hls","muxed","audio"]}]}
+//!     modes: what the renderer plays of what we serve (empty: nothing)
 //!   {"type":"casting","videoId":"...","title":"...","channel":"...","duration":213,"label":"HLS 1080p","renderer":"..."}
 //!   {"type":"status","videoId":"...","state":"PLAYING","position":42,"duration":213}
 //!   {"type":"ended","videoId":"..."}      the renderer played the video to its end
@@ -144,7 +145,7 @@ fn discover(host: &Host) {
     let found: Vec<Value> = thread::scope(|s| {
         let handles: Vec<_> = urls.iter().map(|url| s.spawn(move || (url, Renderer::open(url)))).collect();
         handles.into_iter().filter_map(|h| h.join().ok())
-            .filter_map(|(url, r)| r.ok().map(|r| json!({"url": url, "name": r.name})))
+            .filter_map(|(url, r)| r.ok().map(|r| json!({"url": url, "name": r.name, "modes": r.modes()})))
             .collect()
     });
     host.send(json!({"type": "renderers", "renderers": found}));
@@ -158,7 +159,13 @@ fn cast(host: &Host, generation: u64, renderer_url: &str, video_id: &str, mode: 
         return Ok(()); // Another video was cast meanwhile.
     }
     let address = if address.is_empty() { renderer.local_address()?.to_string() } else { address.to_string() };
-    let media = crate::serve(&info, if mode.is_empty() { "hls" } else { mode }, &address)?;
+    // "video" or "music": the renderer's best format for it; or a mode given as is.
+    let mode = match mode {
+        "" | "video" | "music" => renderer.mode_for(if mode == "music" { "music" } else { "video" })
+            .ok_or_else(|| io::Error::other(format!("{} spielt keines der Formate ab", renderer.name)))?,
+        other => other,
+    };
+    let media = crate::serve(&info, mode, &address)?;
     if host.generation.load(Ordering::SeqCst) != generation {
         return Ok(());
     }

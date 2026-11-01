@@ -15,3 +15,4 @@ button:disabled { opacity: .5; }
 .muted { color: var(--muted); }
 #meta { margin-bottom: 8px; }
 #error { color: var(--error); margin: 12px 0 0; }
+#hidden { font-size: 12px; margin: 6px 0 0; }

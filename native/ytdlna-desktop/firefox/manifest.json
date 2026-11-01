@@ -16,7 +16,7 @@
   "icons": { "48": "icon.svg", "96": "icon.svg" },
   "content_scripts": [{
     "matches": ["https://www.youtube.com/*", "https://music.youtube.com/*"],
-    "js": ["content.js"],
+    "js": ["content.js", "castbutton.js"],
     "run_at": "document_idle"
   }]
 }
