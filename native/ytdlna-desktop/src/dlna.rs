@@ -32,6 +32,7 @@ pub fn discover(wait: Duration) -> io::Result<Vec<String>> {
     Ok(found.into_iter().collect())
 }
 
+#[derive(Clone)]
 pub struct Renderer {
     pub name: String,
     pub host: String,
@@ -101,6 +102,23 @@ impl Renderer {
         self.call("Play", &[("Speed", "1")]).map(|_| ())
     }
 
+    pub fn play(&self) -> io::Result<()> {
+        self.call("Play", &[("Speed", "1")]).map(|_| ())
+    }
+
+    pub fn pause(&self) -> io::Result<()> {
+        self.call("Pause", &[]).map(|_| ())
+    }
+
+    pub fn stop(&self) -> io::Result<()> {
+        self.call("Stop", &[]).map(|_| ())
+    }
+
+    pub fn seek(&self, seconds: u64) -> io::Result<()> {
+        let target = format!("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60);
+        self.call("Seek", &[("Unit", "REL_TIME"), ("Target", &target)]).map(|_| ())
+    }
+
     /// Transport state ("PLAYING", "TRANSITIONING", "STOPPED", ...) and position "H:MM:SS".
     pub fn status(&self) -> io::Result<(String, String)> {
         let state = tag(&self.call("GetTransportInfo", &[])?, "CurrentTransportState").unwrap_or_default();
@@ -130,4 +148,11 @@ pub fn escape(s: &str) -> String {
 
 fn unescape(s: &str) -> String {
     s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+}
+
+/// Seconds of "H:MM:SS" (or "H:MM:SS.mmm"); 0 if it does not parse.
+pub fn seconds(time: &str) -> u64 {
+    time.split('.').next().unwrap_or("").split(':').try_fold(0u64, |total, part| {
+        part.parse::<u64>().ok().map(|n| total * 60 + n)
+    }).unwrap_or(0)
 }

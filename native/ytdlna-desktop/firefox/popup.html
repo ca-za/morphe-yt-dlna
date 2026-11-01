@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <section>
+    <label for="renderer">Gerät</label>
+    <div class="row">
+      <select id="renderer"></select>
+      <button id="discover" title="Geräte suchen">Suchen</button>
+    </div>
+    <button id="cast" class="primary">Diesen Tab abspielen</button>
+  </section>
+  <section id="now" hidden>
+    <div id="title"></div>
+    <div id="meta" class="muted"></div>
+    <div class="row">
+      <span id="time" class="muted"></span>
+      <span class="spacer"></span>
+      <button id="toggle">Pause</button>
+      <button id="stop">Stopp</button>
+    </div>
+  </section>
+  <p id="error" hidden></p>
+  <script src="popup.js"></script>
+</body>
+</html>

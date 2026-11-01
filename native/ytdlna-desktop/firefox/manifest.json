@@ -1,0 +1,22 @@
+{
+  "manifest_version": 2,
+  "name": "YT DLNA",
+  "version": "0.1.0",
+  "description": "Spielt YouTube und YouTube Music auf DLNA-Geräten im Heimnetz ab.",
+  "browser_specific_settings": {
+    "gecko": { "id": "ytdlna@speranza.uno", "strict_min_version": "115.0" }
+  },
+  "permissions": ["nativeMessaging", "storage", "tabs"],
+  "background": { "scripts": ["background.js"] },
+  "browser_action": {
+    "default_title": "Auf DLNA-Gerät abspielen",
+    "default_popup": "popup.html",
+    "default_icon": "icon.svg"
+  },
+  "icons": { "48": "icon.svg", "96": "icon.svg" },
+  "content_scripts": [{
+    "matches": ["https://www.youtube.com/*", "https://music.youtube.com/*"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }]
+}

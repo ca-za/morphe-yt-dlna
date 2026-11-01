@@ -1,7 +1,29 @@
 # ytdlna-desktop (prototype)
 
-Casts YouTube videos from a Mac to DLNA renderers, as a first step towards a Firefox extension
-(the extension would talk to this program over native messaging).
+Casts YouTube and YouTube Music from a Mac to DLNA renderers, with a Firefox extension
+(`firefox/`) that talks to this program over native messaging.
+
+## Firefox
+
+1. `cargo build --release`, then `./install-firefox-host.sh` (registers the program for the
+   extension in `~/Library/Application Support/Mozilla/NativeMessagingHosts`).
+2. Firefox: `about:debugging` → This Firefox → Load Temporary Add-on → `firefox/manifest.json`.
+   Release Firefox keeps unsigned extensions only until it restarts; for a lasting install the
+   extension has to be signed (addons.mozilla.org, unlisted) or Firefox Developer Edition /
+   ESR with `xpinstall.signatures.required` off.
+3. Open a video on youtube.com or music.youtube.com, click the extension's icon, choose the
+   device, "Diesen Tab abspielen".
+
+While casting, the tab's player stays muted and paused at the renderer's position. Its play
+button (and a click into the video, space, k) plays or pauses the renderer, its progress bar
+seeks it. At the end of a video the tab moves on to its next title (its queue, autoplay), which
+is then cast. YouTube Music is cast as audio, YouTube as HLS (up to 1080p).
+
+The native messaging protocol is described in `src/host.rs`. For a renderer that is not found
+on the network (an emulator), the extension's storage key `host` sets the address the renderer
+reaches this computer at (e.g. `10.0.2.2`).
+
+## Command line
 
 ```
 ytdlna-desktop discover

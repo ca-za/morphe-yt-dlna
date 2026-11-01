@@ -8,6 +8,7 @@
 
 mod dlna;
 mod fmp4;
+mod host;
 mod youtube;
 
 use std::process::ExitCode;
@@ -19,6 +20,16 @@ use youtube::{Format, Info};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Firefox starts native messaging hosts with the path of their manifest.
+    if args.first().is_some_and(|a| a.ends_with(".json")) || args.first().map(String::as_str) == Some("host") {
+        return match host::run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("ytdlna host: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let result = match args.first().map(String::as_str) {
         Some("discover") => discover(),
         Some("cast") if args.len() >= 3 => cast(&args[1], &args[2], &args[3..]),
@@ -63,22 +74,10 @@ fn cast(description_url: &str, video_id: &str, args: &[String]) -> std::io::Resu
     println!("{} - {} ({} s, {} formats) in {:.1} s", info.title, info.channel, info.duration,
              info.formats.len(), started.elapsed().as_secs_f64());
 
-    ytdlna::upstream::set_range_as_query(true);
-    if let Some(agent) = youtube::user_agent(&info) {
-        ytdlna::upstream::set_user_agent(agent.to_string());
-    }
-    let port = server::start(8720)?;
-    let base = format!("http://{host}:{port}");
-    let (path, mime, label) = match mode {
-        "hls" => register_hls(&info)?,
-        "muxed" => register_single(&info, |f| f.has_video && f.has_audio && f.mime == "video/mp4", "muxed")?,
-        "audio" => register_single(&info, |f| !f.has_video && f.mime == "audio/mp4", "audio")?,
-        other => return Err(std::io::Error::other(format!("unknown mode {other}"))),
-    };
-    let uri = format!("{base}{path}");
-    println!("Serving {label} at {uri} (ready after {:.1} s)", started.elapsed().as_secs_f64());
+    let media = serve(&info, mode, &host)?;
+    println!("Serving {} at {} (ready after {:.1} s)", media.label, media.uri, started.elapsed().as_secs_f64());
 
-    renderer.load(&uri, &didl(&info, &uri, mime))?;
+    renderer.load(&media.uri, &media.metadata)?;
     println!("Sent to {} after {:.1} s", renderer.name, started.elapsed().as_secs_f64());
 
     // Follow the renderer until it stops.
@@ -105,6 +104,31 @@ fn cast(description_url: &str, video_id: &str, args: &[String]) -> std::io::Resu
             return Ok(());
         }
     }
+}
+
+pub struct Media {
+    pub uri: String,
+    pub metadata: String,
+    pub label: String,
+}
+
+/// Registers the streams of a video with the proxy (started if needed) for `mode`:
+/// "hls", "muxed" or "audio". `host` is this computer's address as the renderer reaches it.
+pub fn serve(info: &Info, mode: &str, host: &str) -> std::io::Result<Media> {
+    ytdlna::upstream::set_range_as_query(true);
+    if let Some(agent) = youtube::user_agent(info) {
+        ytdlna::upstream::set_user_agent(agent.to_string());
+    }
+    let port = server::start(8720)?;
+    let (path, mime, label) = match mode {
+        "hls" => register_hls(info)?,
+        "muxed" => register_single(info, |f| f.has_video && f.has_audio && f.mime == "video/mp4", "muxed")?,
+        "audio" => register_single(info, |f| !f.has_video && f.mime == "audio/mp4", "audio")?,
+        other => return Err(std::io::Error::other(format!("unknown mode {other}"))),
+    };
+    let uri = format!("http://{host}:{port}{path}");
+    let metadata = didl(info, &uri, mime);
+    Ok(Media { uri, metadata, label })
 }
 
 /// HLS from separate H.264 tracks (up to 1080p) and the best AAC track, as the Android app does
