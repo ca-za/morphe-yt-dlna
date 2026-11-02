@@ -23,7 +23,13 @@
       <button id="toggle">Pause</button>
       <button id="stop">Stopp</button>
     </div>
-    <label class="volume">Lautstärke <input id="volume" type="range" min="0" max="100" step="1"></label>
+    <label class="volume" id="volume-absolute">Lautstärke <input id="volume" type="range" min="0" max="100" step="1"></label>
+    <div class="volume" id="volume-steps" hidden>
+      <span id="steps-label">Lautstärke</span>
+      <button id="down" title="Leiser">−</button>
+      <button id="up" title="Lauter">+</button>
+      <button id="mute" title="Stumm umschalten">Stumm</button>
+    </div>
     <div id="rooms" hidden><div class="muted">Räume</div><div id="room-list"></div></div>
   </section>
   <p id="error" hidden></p>

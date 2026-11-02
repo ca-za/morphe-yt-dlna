@@ -37,6 +37,9 @@ pub enum Msg {
     Previous,
     Stop,
     Volume(u32),
+    /// Renderers that only take steps (VolumeSteps): so many presses up (+) or down (-).
+    VolumeStep(i32),
+    ToggleMute,
     /// The current title's streams and metadata of a new session are ready (or failed).
     Ready { generation: u64, track: Track, result: Result<Served, String> },
     /// A title's metadata is complete.
@@ -84,6 +87,10 @@ struct Session {
     last_position: u64,
     pending_seek: Option<u64>,
     volume: Option<u32>,
+    /// "absolute" (a value), "steps" (VolumeSteps: only up, down, mute) or "none".
+    volume_control: &'static str,
+    /// VolumeSteps' GetTarget: where the steps go ("hdmi-cec": a receiver).
+    volume_target: String,
     /// Since when a title waits for its metadata (for playlist entries).
     waiting: HashMap<String, Instant>,
 }
@@ -112,6 +119,21 @@ pub fn run(out: Out, tx: Sender<Msg>, rx: Receiver<Msg>) {
                 }
                 nowplaying::clear();
                 return;
+            }
+            Ok(Msg::VolumeStep(steps)) => {
+                // Presses that came in meanwhile go out together (VolumeSteps takes up to 10).
+                let mut steps = steps;
+                let mut later = Vec::new();
+                while let Ok(msg) = rx.try_recv() {
+                    match msg {
+                        Msg::VolumeStep(more) => steps += more,
+                        other => later.push(other),
+                    }
+                }
+                actor.handle(Msg::VolumeStep(steps));
+                for msg in later {
+                    actor.handle(msg);
+                }
             }
             Ok(msg) => actor.handle(msg),
             Err(RecvTimeoutError::Timeout) => {
@@ -185,6 +207,7 @@ impl Actor {
             }
             return;
         }
+        let volume_message = matches!(msg, Msg::VolumeStep(_) | Msg::ToggleMute);
         let s = self.session.as_mut().unwrap();
         let r = &s.renderer;
         let result = match msg {
@@ -211,8 +234,17 @@ impl Actor {
                 s.volume = Some(volume);
                 set_volume(r, volume)
             }
+            Msg::VolumeStep(steps) => volume_steps(r, steps),
+            Msg::ToggleMute => r.call("VolumeSteps", "ToggleMute", &[]).map(|_| ()),
             _ => Ok(()),
         };
+        // VolumeSteps gone (the renderer changed how it takes the volume): read it again.
+        if result.as_ref().is_err_and(|e| e.to_string().contains("HTTP 404")) && volume_message {
+            if let Ok(fresh) = Renderer::open(&s.renderer.description_url) {
+                s.renderer = fresh;
+            }
+            s.volume_control = "";
+        }
         if let Err(e) = result {
             self.error(e, "");
         }
@@ -287,6 +319,7 @@ impl Actor {
             generation, renderer, mode, base: format!("http://{address}:{port}"), music, queue, autoplay,
             current: video_id.to_string(), started: false, backend, state: String::new(), position: 0,
             played: false, last_position: 0, pending_seek: (start > 3).then_some(start), volume: None,
+            volume_control: "none", volume_target: String::new(),
             waiting: HashMap::new(),
         });
         // Streams and metadata of the first title in parallel.
@@ -461,8 +494,23 @@ impl Actor {
                 eprintln!("ytdlna host: seek failed: {e}");
             }
         }
-        if self.ticks % 3 == 1 {
+        // A renderer can change how it takes the volume (a receiver comes or goes): its
+        // description tells, read again now and then.
+        if self.ticks % 30 == 0 {
+            if let Ok(fresh) = Renderer::open(&s.renderer.description_url) {
+                s.renderer = fresh;
+                s.volume_control = "";
+            }
+        }
+        if s.volume_control.is_empty() {
+            let (control, target) = volume_control(&s.renderer);
+            s.volume_control = control;
+            s.volume_target = target;
+        }
+        if s.volume_control == "absolute" && self.ticks % 3 == 1 {
             s.volume = get_volume(&s.renderer).ok();
+        } else if s.volume_control != "absolute" {
+            s.volume = None;
         }
         if s.state != state || position.abs_diff(s.position) > 2 || self.ticks % 10 == 0 {
             nowplaying::playback(state == "PLAYING", position);
@@ -472,7 +520,8 @@ impl Actor {
         let track_duration = self.completed.get(&s.current).map_or(0, |t| t.duration);
         let duration = if duration > 0 { duration } else { track_duration };
         (self.out)(json!({"type": "status", "videoId": s.current, "state": state, "position": position,
-                          "duration": duration, "volume": s.volume}));
+                          "duration": duration, "volume": s.volume, "volumeControl": s.volume_control,
+                          "volumeTarget": s.volume_target}));
 
         // The end of a title (and of the playlist, for OpenHome).
         let near_end = duration > 0 && s.last_position + 5 >= duration;
@@ -643,6 +692,30 @@ fn mode_label(mode: &str) -> &'static str {
 
 fn pause(r: &Renderer, openhome: bool) -> std::io::Result<()> {
     if openhome { r.call("Playlist", "Pause", &[]).map(|_| ()) } else { r.pause() }
+}
+
+/// How the renderer takes the volume, and where steps go: see the renderer's docs/volume-steps.md.
+fn volume_control(r: &Renderer) -> (&'static str, String) {
+    if r.has("VolumeSteps") {
+        let target = r.call("VolumeSteps", "GetTarget", &[]).ok()
+            .and_then(|t| dlna::tag(&t, "Target")).unwrap_or_default();
+        return ("steps", target);
+    }
+    if get_volume(r).is_ok() {
+        return ("absolute", String::new());
+    }
+    ("none", String::new())
+}
+
+/// Up or down by `steps` presses, at most 10 per call.
+fn volume_steps(r: &Renderer, steps: i32) -> std::io::Result<()> {
+    let mut left = steps;
+    while left != 0 {
+        let now = left.clamp(-10, 10);
+        r.call("VolumeSteps", if now > 0 { "Up" } else { "Down" }, &[("Steps", &now.abs().to_string())])?;
+        left -= now;
+    }
+    Ok(())
 }
 
 fn get_volume(r: &Renderer) -> std::io::Result<u32> {

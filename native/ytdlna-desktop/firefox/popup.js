@@ -28,7 +28,12 @@ function render(state) {
     $("time").textContent = s ? `${time(s.position)} / ${time(c.duration)}` : "";
     $("toggle").textContent = s && s.state === "PLAYING" ? "Pause" : "Abspielen";
     // Not while the slider is moved: the renderer's answer lags behind.
+    // A value (slider), only steps (a receiver: − + mute, no value to show) or nothing.
+    const control = s ? s.volumeControl : null;
     const volume = s && typeof s.volume === "number" ? s.volume : null;
+    $("volume-absolute").hidden = control !== "absolute";
+    $("volume-steps").hidden = control !== "steps";
+    $("steps-label").textContent = s && s.volumeTarget === "hdmi-cec" ? "Lautstärke am Receiver" : "Lautstärke";
     $("volume").disabled = volume === null;
     if (volume !== null && Date.now() - volumeMovedAt > 2500) $("volume").value = volume;
   }
@@ -49,6 +54,9 @@ $("volume").oninput = (e) => {
   clearTimeout(volumeTimer);
   volumeTimer = setTimeout(() => browser.runtime.sendMessage({ type: "control", cmd: "volume", value: Number(e.target.value) }), 120);
 };
+$("up").onclick = () => browser.runtime.sendMessage({ type: "control", cmd: "volumeStep", steps: 1 });
+$("down").onclick = () => browser.runtime.sendMessage({ type: "control", cmd: "volumeStep", steps: -1 });
+$("mute").onclick = () => browser.runtime.sendMessage({ type: "control", cmd: "toggleMute" });
 $("stop").onclick = () => browser.runtime.sendMessage({ type: "control", cmd: "stop" });
 
 browser.runtime.sendMessage({ type: "getState" }).then((state) => {

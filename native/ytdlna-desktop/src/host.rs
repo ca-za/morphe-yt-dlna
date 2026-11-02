@@ -12,6 +12,7 @@
 //!     autoplay: the queue is the video and what autoplay plays next, not a list
 //!   {"cmd":"play"} {"cmd":"pause"} {"cmd":"toggle"} {"cmd":"seek","seconds":90}
 //!   {"cmd":"next"} {"cmd":"previous"} {"cmd":"stop"} {"cmd":"volume","value":30}
+//!   {"cmd":"volumeStep","steps":-2} {"cmd":"toggleMute"}   renderers with VolumeSteps
 //!   Sonos: {"cmd":"rooms","renderer":"..."}  {"cmd":"room","renderer":"...","id":"RINCON_...","in":true}
 //!          {"cmd":"roomVolume","renderer":"...","id":"RINCON_...","value":20}
 //! To the extension:
@@ -21,7 +22,9 @@
 //!   {"type":"rooms","renderer":"...","title":"Kitchen + 1","rooms":[{"id","name","leading","in","volume"}]}
 //!   {"type":"casting", "videoId", "title", "channel", "album", "year", "art", "duration", "label", "renderer"}
 //!   {"type":"track", ...the same}          the renderer moved on to this title by itself
-//!   {"type":"status","videoId":"...","state":"PLAYING","position":42,"duration":213,"volume":20}
+//!   {"type":"status","videoId":"...","state":"PLAYING","position":42,"duration":213,"volume":20,
+//!    "volumeControl":"absolute|steps|none","volumeTarget":"hdmi-cec"}
+//!     steps: the renderer only takes presses up, down and mute (a receiver over HDMI-CEC), no value
 //!   {"type":"ended","videoId":"..."}      the renderer played the last title it had to its end
 //!   {"type":"stopped","videoId":"..."}    the renderer stopped before the end (its remote)
 //!   {"type":"error","message":"...","videoId":"..."}
@@ -125,6 +128,8 @@ fn handle(out: &Out, tx: &Sender<Msg>, message: Value) {
         "previous" => Msg::Previous,
         "stop" => Msg::Stop,
         "volume" => Msg::Volume(message["value"].as_f64().unwrap_or(0.0).clamp(0.0, 100.0) as u32),
+        "volumeStep" => Msg::VolumeStep(message["steps"].as_i64().unwrap_or(0).clamp(-100, 100) as i32),
+        "toggleMute" => Msg::ToggleMute,
         other => {
             out(json!({"type": "error", "message": format!("unknown command {other:?}")}));
             return;

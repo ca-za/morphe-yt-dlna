@@ -87,6 +87,9 @@ const MENU_STYLE = `
   .muted { color: #aaa; padding: 8px 16px; }
   .error { color: #ff8a80; padding: 8px 16px; }
   .volume { display: flex; align-items: center; gap: 12px; padding: 4px 16px 8px; }
+  .steps { display: flex; align-items: center; gap: 6px; padding: 4px 16px 8px; }
+  button.step { width: auto; min-width: 36px; padding: 6px 10px; justify-content: center; border-radius: 8px;
+                background: rgba(255, 255, 255, .1); }
   .volume input { flex: 1; accent-color: #e53935; }
   hr { border: 0; border-top: 1px solid rgba(255, 255, 255, .15); margin: 6px 0; }
 `;
@@ -173,7 +176,8 @@ function renderMenu() {
         : `${s.unsupported} Geräte ohne passendes Format ausgeblendet`));
     }
     box.append(document.createElement("hr"));
-    if (castingHere && s.status && typeof s.status.volume === "number") box.append(volumeRow(s.status.volume));
+    if (castingHere && s.status && s.status.volumeControl === "steps") box.append(stepsRow(s.status.volumeTarget));
+    else if (castingHere && s.status && typeof s.status.volume === "number") box.append(volumeRow(s.status.volume));
     const sonos = castingHere && (s.renderers.find((r) => r.url === s.renderer) || {}).sonos;
     if (sonos) {
       box.append(item(roomsOpen ? "Räume ▾" : "Räume ▸", () => {
@@ -226,6 +230,32 @@ function volumeRow(volume, onChange) {
   });
   slider.addEventListener("pointerdown", () => (volumeSlider = slider));
   row.append(icon, slider);
+  return row;
+}
+
+// A receiver behind the renderer (VolumeSteps): only presses down, up and mute, no value.
+function stepsRow(target) {
+  const row = document.createElement("div");
+  row.className = "steps";
+  const label = document.createElement("span");
+  label.className = "name";
+  label.textContent = target === "hdmi-cec" ? "Lautstärke am Receiver" : "Lautstärke";
+  row.append(label);
+  for (const [text, title, message] of [
+    ["−", "Leiser", { cmd: "volumeStep", steps: -1 }],
+    ["+", "Lauter", { cmd: "volumeStep", steps: 1 }],
+    ["Stumm", "Stumm umschalten", { cmd: "toggleMute" }],
+  ]) {
+    const b = document.createElement("button");
+    b.className = "step";
+    b.textContent = text;
+    b.title = title;
+    b.addEventListener("click", (event) => {
+      event.stopPropagation();
+      browser.runtime.sendMessage(Object.assign({ type: "control" }, message));
+    });
+    row.append(b);
+  }
   return row;
 }
 

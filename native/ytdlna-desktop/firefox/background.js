@@ -207,7 +207,7 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
         release(null);
         changed();
       } else {
-        send({ cmd: message.cmd, seconds: message.seconds, value: message.value });
+        send({ cmd: message.cmd, seconds: message.seconds, value: message.value, steps: message.steps });
       }
       return;
     case "video":

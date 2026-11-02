@@ -22,3 +22,5 @@ button:disabled { opacity: .5; }
 .room { align-items: center; display: flex; gap: 6px; margin-top: 6px; }
 .room span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room input[type=range] { accent-color: var(--accent); width: 90px; }
+#volume-steps span { flex: 1; }
+#volume-steps button { min-width: 32px; }
