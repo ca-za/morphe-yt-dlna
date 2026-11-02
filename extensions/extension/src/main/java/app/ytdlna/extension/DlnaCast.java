@@ -371,7 +371,18 @@ public final class DlnaCast {
                 rows.add(new DevicePicker.Row(DevicePicker.Icon.TV, name, subtitle,
                         choose.apply(() -> cast(activity, device, current)),
                         location == null ? null : () -> remove.accept(location), rooms));
-                if (connected && volume[0] >= 0) {
+                if (connected && VolumeSteps.has(device)) {
+                    // A receiver behind the TV: only steps and mute, the value is not known.
+                    CastSession playing = session;
+                    Runnable changed = () -> main.post(rebuildRef[0]);
+                    rows.add(DevicePicker.Row.steps(VolumeSteps.label(device),
+                            () -> playing.stepVolume(-1, changed),
+                            () -> playing.stepVolume(1, changed),
+                            () -> {
+                                playing.toggleMute(changed);
+                                Toast.makeText(activity, t("Stumm umgeschaltet", "Mute toggled"), Toast.LENGTH_SHORT).show();
+                            }));
+                } else if (connected && volume[0] >= 0) {
                     CastSession playing = session;
                     rows.add(DevicePicker.Row.volume(t("Lautstärke ", "Volume ") + name, volume[0], v -> {
                         volume[0] = v;
@@ -430,10 +441,27 @@ public final class DlnaCast {
         picker[0].show();
         CastSession playing = CastSession.active();
         if (playing != null) {
-            playing.readVolume(v -> main.post(() -> {
-                volume[0] = v;
-                if (picker[0].isShowing()) rebuild.run();
-            }));
+            // How the renderer takes the volume can have changed (a receiver came or went): its
+            // description tells; then a value (slider), steps (receiver) or nothing.
+            new Thread(() -> {
+                try {
+                    playing.device.refreshVolumeServices();
+                } catch (Exception e) {
+                    Log.d("Reading the description again failed: " + e.getMessage());
+                }
+                if (VolumeSteps.has(playing.device)) {
+                    VolumeSteps.target(playing.device);
+                    volume[0] = -1;
+                    main.post(() -> {
+                        if (picker[0].isShowing()) rebuild.run();
+                    });
+                    return;
+                }
+                playing.readVolume(v -> main.post(() -> {
+                    volume[0] = v;
+                    if (picker[0].isShowing()) rebuild.run();
+                }));
+            }, "ytdlna-volume").start();
         }
 
         DlnaDiscovery.Listener onDevice = device -> main.post(() -> {

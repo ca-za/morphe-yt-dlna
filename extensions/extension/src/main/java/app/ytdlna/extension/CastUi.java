@@ -161,9 +161,28 @@ final class CastUi implements Application.ActivityLifecycleCallbacks {
 
     private boolean handleVolumeKey(KeyEvent event) {
         int code = event.getKeyCode();
-        if (code != KeyEvent.KEYCODE_VOLUME_UP && code != KeyEvent.KEYCODE_VOLUME_DOWN) return false;
+        boolean mute = code == KeyEvent.KEYCODE_VOLUME_MUTE;
+        if (code != KeyEvent.KEYCODE_VOLUME_UP && code != KeyEvent.KEYCODE_VOLUME_DOWN && !mute) return false;
         CastSession session = CastSession.active();
         if (session == null) return false;
+        if (VolumeSteps.has(session.device)) {
+            // A receiver: each press (held keys repeat) is a step, sent in bundles; no value to show.
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                String text;
+                if (mute) {
+                    if (event.getRepeatCount() > 0) return true;
+                    session.toggleMute(null);
+                    text = DlnaCast.t("Stumm umgeschaltet", "Mute toggled");
+                } else {
+                    boolean up = code == KeyEvent.KEYCODE_VOLUME_UP;
+                    session.stepVolume(up ? 1 : -1, null);
+                    text = VolumeSteps.label(session.device) + (up ? " +" : " −");
+                }
+                showVolumeToast(session.device.friendlyName + ": " + text);
+            }
+            return true;
+        }
+        if (mute) return false;
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             session.adjustVolume(code == KeyEvent.KEYCODE_VOLUME_UP ? VOLUME_STEP : -VOLUME_STEP, volume -> main.post(() -> {
                 // One toast, updated while the key is pressed repeatedly.
@@ -174,6 +193,15 @@ final class CastUi implements Application.ActivityLifecycleCallbacks {
             }));
         }
         return true;
+    }
+
+    /** One toast, replaced while keys are pressed repeatedly. */
+    private void showVolumeToast(String text) {
+        main.post(() -> {
+            if (volumeToast != null) volumeToast.cancel();
+            volumeToast = Toast.makeText(appContext, text, Toast.LENGTH_SHORT);
+            volumeToast.show();
+        });
     }
 
     // endregion

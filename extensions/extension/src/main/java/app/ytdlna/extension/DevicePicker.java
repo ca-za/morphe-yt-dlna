@@ -52,6 +52,10 @@ final class DevicePicker {
         /** Non-null: the row is a volume slider instead (value 0-100, set on release). */
         final java.util.function.IntConsumer onVolume;
         final int volume;
+        /** Non-null: the row is volume steps instead (a receiver): down, up and mute buttons. */
+        final Runnable onStepDown;
+        final Runnable onStepUp;
+        final Runnable onMute;
 
         Row(Icon icon, String text, String subtitle, Runnable onClick) {
             this(icon, text, subtitle, onClick, null);
@@ -65,6 +69,9 @@ final class DevicePicker {
             this.onRooms = onRooms;
             this.onVolume = null;
             this.volume = -1;
+            this.onStepDown = null;
+            this.onStepUp = null;
+            this.onMute = null;
             this.icon = icon;
             this.text = text;
             this.subtitle = subtitle;
@@ -81,6 +88,28 @@ final class DevicePicker {
             this.onRooms = null;
             this.volume = volume;
             this.onVolume = onVolume;
+            this.onStepDown = null;
+            this.onStepUp = null;
+            this.onMute = null;
+        }
+
+        private Row(String label, Runnable onStepDown, Runnable onStepUp, Runnable onMute) {
+            this.icon = Icon.VOLUME;
+            this.text = label;
+            this.subtitle = null;
+            this.onClick = null;
+            this.onDelete = null;
+            this.onRooms = null;
+            this.volume = -1;
+            this.onVolume = null;
+            this.onStepDown = onStepDown;
+            this.onStepUp = onStepUp;
+            this.onMute = onMute;
+        }
+
+        /** Volume in steps only (a receiver): − + and mute, no value (it is not known). */
+        static Row steps(String label, Runnable onStepDown, Runnable onStepUp, Runnable onMute) {
+            return new Row(label, onStepDown, onStepUp, onMute);
         }
 
         /** A volume slider; {@code description} is read by screen readers. */
@@ -258,11 +287,56 @@ final class DevicePicker {
         dialog.show();
     }
 
+    /** A small round button for volume steps, in the sheet's colors. */
+    private TextView stepButton(String text, String description, Runnable onClick) {
+        TextView button = new TextView(activity);
+        button.setText(text);
+        button.setContentDescription(description);
+        button.setTextColor(textColor);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, text.length() == 1 ? 20 : 14);
+        button.setGravity(Gravity.CENTER);
+        button.setMinWidth(dp(48));
+        button.setMinHeight(dp(40));
+        button.setPadding(dp(12), 0, dp(12), 0);
+        android.graphics.drawable.GradientDrawable shape = new android.graphics.drawable.GradientDrawable();
+        shape.setCornerRadius(dp(20));
+        shape.setColor(dark ? 0x26FFFFFF : 0x14000000);
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(dark ? 0x33FFFFFF : 0x1F000000), shape, null));
+        button.setClickable(true);
+        button.setOnClickListener(v -> onClick.run());
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.leftMargin = dp(8);
+        button.setLayoutParams(params);
+        return button;
+    }
+
     void dismiss() {
         dialog.dismiss();
     }
 
     private View rowView(Row row) {
+        if (row.onStepUp != null) {
+            // Under the connected device: speaker icon, label and the buttons, like the slider row.
+            LinearLayout view = new LinearLayout(activity);
+            view.setGravity(Gravity.CENTER_VERTICAL);
+            view.setMinimumHeight(dp(48));
+            view.setPadding(dp(24), 0, dp(16), dp(8));
+            ImageView icon = new ImageView(activity);
+            icon.setImageDrawable(new IconDrawable(Icon.VOLUME, secondaryColor));
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+            iconParams.rightMargin = dp(24);
+            view.addView(icon, iconParams);
+            TextView label = new TextView(activity);
+            label.setText(row.text);
+            label.setTextColor(secondaryColor);
+            label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            view.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            view.addView(stepButton("−", DlnaCast.t("Leiser", "Volume down"), row.onStepDown));
+            view.addView(stepButton("+", DlnaCast.t("Lauter", "Volume up"), row.onStepUp));
+            view.addView(stepButton(DlnaCast.t("Stumm", "Mute"), DlnaCast.t("Stumm umschalten", "Toggle mute"), row.onMute));
+            return view;
+        }
         if (row.onVolume != null) {
             // Under the connected device: speaker icon and slider, indented like a row's text.
             LinearLayout view = new LinearLayout(activity);

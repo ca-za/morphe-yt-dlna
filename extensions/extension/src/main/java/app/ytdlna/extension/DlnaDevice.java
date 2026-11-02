@@ -27,8 +27,8 @@ final class DlnaDevice {
     String connectionManagerType = CONNECTION_MANAGER + "1";
     String connectionManagerControlUrl;
     String avTransportEventUrl;
-    String renderingControlType;
-    String renderingControlUrl;
+    volatile String renderingControlType;
+    volatile String renderingControlUrl;
 
     // OpenHome services, if the renderer has them.
     String playlistType;
@@ -54,6 +54,11 @@ final class DlnaDevice {
     // A renderer that can skip SponsorBlock segments itself (see RendererExtras.takeSkipping).
     String castExtrasType;
     String castExtrasUrl;
+
+    // A renderer whose volume is a receiver's: only steps (see VolumeSteps). It can come and go
+    // while the renderer runs (refreshVolumeServices).
+    volatile String volumeStepsType;
+    volatile String volumeStepsUrl;
 
     boolean hasOpenHomePlaylist() {
         return playlistControlUrl != null;
@@ -101,6 +106,18 @@ final class DlnaDevice {
         // Media types are case-insensitive ("application/x-mpegURL" = "application/x-mpegurl").
         String lower = sink.toLowerCase(java.util.Locale.ROOT);
         return lower.contains(":" + mimeType.toLowerCase(java.util.Locale.ROOT) + ":") || lower.contains(":*:*");
+    }
+
+    /**
+     * Reads the description again for how the renderer takes the volume (steps, a value, none):
+     * it changes when a receiver comes or goes (the renderer then announces itself anew).
+     */
+    void refreshVolumeServices() throws Exception {
+        DlnaDevice fresh = load(location);
+        volumeStepsType = fresh.volumeStepsType;
+        volumeStepsUrl = fresh.volumeStepsUrl;
+        renderingControlType = fresh.renderingControlType;
+        renderingControlUrl = fresh.renderingControlUrl;
     }
 
     /** Downloads and parses the device description. */
@@ -220,6 +237,9 @@ final class DlnaDevice {
                                 } else if (serviceType.startsWith(RendererExtras.SERVICE) && castExtrasUrl == null) {
                                     castExtrasType = serviceType;
                                     castExtrasUrl = absolute;
+                                } else if (serviceType.startsWith(VolumeSteps.SERVICE) && volumeStepsUrl == null) {
+                                    volumeStepsType = serviceType;
+                                    volumeStepsUrl = absolute;
                                 } else if (serviceType.startsWith(RendererZones.SERVICE) && zonesUrl == null) {
                                     zonesType = serviceType;
                                     zonesUrl = absolute;

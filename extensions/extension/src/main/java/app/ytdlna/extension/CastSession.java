@@ -978,6 +978,87 @@ final class CastSession implements StreamCapture.Listener, MusicMode.Listener,
         });
     }
 
+    // region Volume steps (a receiver behind the renderer, see VolumeSteps)
+
+    private final Object stepLock = new Object();
+    /** Presses not sent yet: while a call is on its way, they are collected and go out together. */
+    private int pendingSteps;
+    private boolean stepping;
+
+    /**
+     * {@code steps} presses up (positive) or down. {@code onChanged} runs if the renderer no
+     * longer takes steps (it changed how it takes the volume), to update the controls.
+     */
+    void stepVolume(int steps, Runnable onChanged) {
+        if (stopped) return;
+        synchronized (stepLock) {
+            pendingSteps += steps;
+            if (stepping) return;
+            stepping = true;
+        }
+        Runnable send = () -> {
+            try {
+                while (true) {
+                    int now;
+                    synchronized (stepLock) {
+                        now = Math.max(-VolumeSteps.MAX_STEPS, Math.min(VolumeSteps.MAX_STEPS, pendingSteps));
+                        pendingSteps -= now;
+                        if (now == 0) {
+                            stepping = false;
+                            return;
+                        }
+                    }
+                    VolumeSteps.step(device, now);
+                }
+            } catch (Exception e) {
+                synchronized (stepLock) {
+                    pendingSteps = 0;
+                    stepping = false;
+                }
+                volumeServiceFailed(e, onChanged);
+            }
+        };
+        try {
+            rendererThread.execute(send);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // The session ended meanwhile.
+            synchronized (stepLock) {
+                pendingSteps = 0;
+                stepping = false;
+            }
+        }
+    }
+
+    /** One press on the receiver's mute (it switches; whether it is muted then, nobody knows). */
+    void toggleMute(Runnable onChanged) {
+        if (stopped) return;
+        try {
+            rendererThread.execute(() -> {
+                try {
+                    VolumeSteps.toggleMute(device);
+                } catch (Exception e) {
+                    volumeServiceFailed(e, onChanged);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // The session ended meanwhile.
+        }
+    }
+
+    private void volumeServiceFailed(Exception e, Runnable onChanged) {
+        Log.i("Volume steps failed: " + e.getMessage());
+        if (!VolumeSteps.gone(e)) return;
+        try {
+            device.refreshVolumeServices();
+        } catch (Exception refresh) {
+            Log.d("Reading the description again failed: " + refresh.getMessage());
+        }
+        rendererVolume = -1;
+        if (onChanged != null) onChanged.run();
+    }
+
+    // endregion
+
     private interface RendererCall {
         void run(Renderer renderer) throws Exception;
     }
