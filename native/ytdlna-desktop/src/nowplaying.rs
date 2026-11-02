@@ -46,10 +46,14 @@ mod imp {
         }
     }
 
-    fn with(f: impl FnOnce(&mut State)) {
-        if let Some(s) = state().lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-            f(s);
-        }
+    /// Runs `f` on the main thread: macOS' remote command center and now playing info are not
+    /// to be touched from other threads (it then ignores changes, e.g. the skip buttons stay off).
+    fn with(f: impl FnOnce(&mut State) + Send + 'static) {
+        dispatch::Queue::main().exec_async(move || {
+            if let Some(s) = state().lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+                f(s);
+            }
+        });
     }
 
     fn attach(s: &mut State) {
@@ -76,12 +80,14 @@ mod imp {
             let _ = tx.lock().map(|tx| tx.send(msg));
         });
         s.attached = true;
+        eprintln!("ytdlna host: media keys attached (main thread: {})", std::thread::current().name().unwrap_or("?"));
     }
 
     pub fn track(track: &Track, renderer: &str) {
-        with(|s| {
+        let (track, renderer) = (track.clone(), renderer.to_string());
+        with(move |s| {
             attach(s);
-            let artist = if track.artist.is_empty() { renderer.to_string() } else { format!("{} · {renderer}", track.artist) };
+            let artist = if track.artist.is_empty() { renderer.clone() } else { format!("{} · {renderer}", track.artist) };
             let _ = s.controls.set_metadata(MediaMetadata {
                 title: Some(&track.title),
                 artist: Some(&artist),
@@ -93,7 +99,7 @@ mod imp {
     }
 
     pub fn playback(playing: bool, position: u64) {
-        with(|s| {
+        with(move |s| {
             s.position = position;
             let progress = Some(MediaPosition(Duration::from_secs(position)));
             let _ = s.controls.set_playback(if playing { MediaPlayback::Playing { progress } } else { MediaPlayback::Paused { progress } });
@@ -111,9 +117,17 @@ mod imp {
         });
     }
 
+    extern "C" fn idle(_timer: core_foundation::runloop::CFRunLoopTimerRef, _info: *mut std::ffi::c_void) {}
+
     pub fn run_main_loop() -> ! {
+        use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop, CFRunLoopTimer};
+        // A timer far in the future keeps the run loop from returning while nothing is due; it
+        // runs the main queue (our calls above) and delivers the command callbacks.
+        let now = unsafe { core_foundation::date::CFAbsoluteTimeGetCurrent() };
+        let timer = CFRunLoopTimer::new(now + 1e9, 1e9, 0, 0, idle, std::ptr::null_mut());
+        CFRunLoop::get_current().add_timer(&timer, unsafe { kCFRunLoopDefaultMode });
         loop {
-            unsafe { core_foundation::runloop::CFRunLoopRun() };
+            CFRunLoop::run_current();
             std::thread::sleep(Duration::from_millis(100));
         }
     }

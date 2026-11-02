@@ -17,6 +17,7 @@ unicode-normalization = "0.1"
 souvlaki = "0.8"
 core-foundation = "0.10"
 objc = "0.2"
+dispatch = "0.2"
 
 [profile.release]
 opt-level = 3
