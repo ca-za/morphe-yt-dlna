@@ -76,8 +76,14 @@ function fromNative(message) {
         state.renderer = state.renderers[0].url;
       }
       break;
+    case "track":
+      // The renderer moved on by itself: the tab follows.
+      state.casting = Object.assign({}, state.casting || {}, message);
+      state.status = null;
+      toTab({ type: "goto", videoId: message.videoId });
+      break;
     case "casting":
-      if (message.videoId !== state.loading) return;
+      if (message.videoId !== state.loading && !(state.casting && state.tabId !== null)) return;
       state.loading = null;
       state.casting = message;
       state.error = null;
@@ -102,7 +108,7 @@ function fromNative(message) {
   changed();
 }
 
-function cast(tabId, videoId, start, music) {
+function cast(tabId, videoId, start, music, queue, autoplay) {
   // Another tab cast so far: its player is free again.
   if (state.tabId !== null && state.tabId !== tabId) release(null);
   state.tabId = tabId;
@@ -111,7 +117,7 @@ function cast(tabId, videoId, start, music) {
   state.error = null;
   // The native side picks the renderer's best format for a video or a song.
   send({ cmd: "cast", renderer: state.renderer, videoId, start: Math.floor(start || 0), mode: music ? "music" : "video",
-         host: state.host });
+         host: state.host, queue: queue || [], autoplay: !!autoplay });
   toTab({ type: "hold" });
   changed();
 }
@@ -151,7 +157,7 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
       // The cast button in the page's player: this tab, on the device chosen in its menu.
       if (!fromPage(sender) || !message.videoId) return;
       select(message.url);
-      cast(sender.tab.id, message.videoId, message.position, message.music);
+      cast(sender.tab.id, message.videoId, message.position, message.music, message.queue, message.autoplay);
       return;
     case "select":
       select(message.url);
@@ -181,26 +187,26 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
         changed();
         return;
       }
-      cast(tab.id, video.videoId, video.position, video.music);
+      cast(tab.id, video.videoId, video.position, video.music, video.queue, video.autoplay);
       return;
     }
     case "control":
       // From the popup, or from the page's own buttons (the tab with the cast).
       if (fromPage(sender) && sender.tab.id !== state.tabId) return;
-      if (message.cmd === "toggle") {
-        const playing = state.status && state.status.state === "PLAYING";
-        send({ cmd: playing ? "pause" : "play" });
-      } else if (message.cmd === "stop") {
+      if (message.cmd === "stop") {
         send({ cmd: "stop" });
         release(null);
         changed();
       } else {
-        send({ cmd: message.cmd, seconds: message.seconds });
+        send({ cmd: message.cmd, seconds: message.seconds, value: message.value });
       }
       return;
     case "video":
       // The cast tab moved on to another video (its queue, a click in the page).
-      if (fromPage(sender) && sender.tab.id === state.tabId) cast(state.tabId, message.videoId, 0, message.music);
+      if (fromPage(sender) && sender.tab.id === state.tabId) cast(state.tabId, message.videoId, 0, message.music, message.queue, message.autoplay);
+      return;
+    case "queue":
+      if (fromPage(sender) && sender.tab.id === state.tabId && state.casting) send({ cmd: "queue", queue: message.queue, autoplay: !!message.autoplay });
       return;
   }
 });

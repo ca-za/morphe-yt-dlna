@@ -6,19 +6,24 @@
 //!
 //! From the extension:
 //!   {"cmd":"discover"}
-//!   {"cmd":"cast","renderer":"<description url>","videoId":"...","mode":"video|music|hls|muxed|audio","start":12}
-//!   {"cmd":"play"} {"cmd":"pause"} {"cmd":"seek","seconds":90} {"cmd":"stop"}
+//!   {"cmd":"cast","renderer":"<description url>","videoId":"...","mode":"video|music","start":12,
+//!    "queue":[{"videoId":"...","title":"...","artist":"...","album":"...","year":"...","art":"...","duration":213}]}
+//!   {"cmd":"queue","queue":[...],"autoplay":false}   the tab's queue changed
+//!     autoplay: the queue is the video and what autoplay plays next, not a list
+//!   {"cmd":"play"} {"cmd":"pause"} {"cmd":"toggle"} {"cmd":"seek","seconds":90}
+//!   {"cmd":"next"} {"cmd":"previous"} {"cmd":"stop"} {"cmd":"volume","value":30}
 //! To the extension:
 //!   {"type":"renderers","renderers":[{"url":"...","name":"...","modes":["hls","muxed","audio"]}]}
 //!     modes: what the renderer plays of what we serve (empty: nothing)
-//!   {"type":"casting","videoId":"...","title":"...","channel":"...","duration":213,"label":"HLS 1080p","renderer":"..."}
-//!   {"type":"status","videoId":"...","state":"PLAYING","position":42,"duration":213}
-//!   {"type":"ended","videoId":"..."}      the renderer played the video to its end
+//!   {"type":"casting", "videoId", "title", "channel", "album", "year", "art", "duration", "label", "renderer"}
+//!   {"type":"track", ...the same}          the renderer moved on to this title by itself
+//!   {"type":"status","videoId":"...","state":"PLAYING","position":42,"duration":213,"volume":20}
+//!   {"type":"ended","videoId":"..."}      the renderer played the last title it had to its end
 //!   {"type":"stopped","videoId":"..."}    the renderer stopped before the end (its remote)
 //!   {"type":"error","message":"...","videoId":"..."}
 
 use std::io::{self, Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -26,52 +31,38 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::dlna::{self, Renderer};
-use crate::youtube;
-
-#[derive(Clone)]
-struct Session {
-    generation: u64,
-    renderer: Renderer,
-    video_id: String,
-    duration: u64,
-}
-
-struct Host {
-    out: Mutex<io::Stdout>,
-    session: Mutex<Option<Session>>,
-    /// Raised by every cast and stop: older work drops its results.
-    generation: AtomicU64,
-}
-
-impl Host {
-    fn send(&self, message: Value) {
-        let body = message.to_string();
-        let mut out = self.out.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = out.write_all(&(body.len() as u32).to_ne_bytes());
-        let _ = out.write_all(body.as_bytes());
-        let _ = out.flush();
-    }
-
-    fn current(&self) -> Option<Session> {
-        self.session.lock().unwrap_or_else(|e| e.into_inner()).clone()
-    }
-
-    fn error(&self, message: impl std::fmt::Display, video_id: &str) {
-        eprintln!("ytdlna host: {message}");
-        self.send(json!({"type": "error", "message": message.to_string(), "videoId": video_id}));
-    }
-}
+use crate::metadata::Track;
+use crate::session::{self, Msg, Out};
 
 pub fn run() -> io::Result<()> {
     // Started by Firefox the PATH is the system's: add Homebrew's for yt-dlp and deno.
     let path = std::env::var("PATH").unwrap_or_default();
     std::env::set_var("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{path}"));
 
-    let host = Arc::new(Host { out: Mutex::new(io::stdout()), session: Mutex::new(None), generation: AtomicU64::new(0) });
+    let stdout = Mutex::new(io::stdout());
+    let out: Out = Arc::new(move |message: Value| {
+        let body = message.to_string();
+        let mut out = stdout.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = out.write_all(&(body.len() as u32).to_ne_bytes());
+        let _ = out.write_all(body.as_bytes());
+        let _ = out.flush();
+    });
+    let (tx, rx) = channel();
     {
-        let host = host.clone();
-        thread::Builder::new().name("status".into()).spawn(move || follow(&host))?;
+        let (out, tx) = (out.clone(), tx.clone());
+        thread::Builder::new().name("session".into()).spawn(move || session::run(out, tx, rx))?;
     }
+    {
+        let (out, tx) = (out.clone(), tx.clone());
+        thread::Builder::new().name("stdin".into()).spawn(move || read_messages(out, tx))?;
+    }
+    // Reading stdin ends the process when Firefox goes; until then the main thread waits.
+    loop {
+        thread::park();
+    }
+}
+
+fn read_messages(out: Out, tx: Sender<Msg>) {
     let mut input = io::stdin().lock();
     loop {
         let mut length = [0u8; 4];
@@ -79,67 +70,62 @@ pub fn run() -> io::Result<()> {
             break; // Firefox closed the connection.
         }
         let mut body = vec![0u8; u32::from_ne_bytes(length) as usize];
-        input.read_exact(&mut body)?;
+        if input.read_exact(&mut body).is_err() {
+            break;
+        }
         match serde_json::from_slice::<Value>(&body) {
-            Ok(message) => handle(&host, message),
-            Err(e) => host.error(format!("bad message: {e}"), ""),
+            Ok(message) => handle(&out, &tx, message),
+            Err(e) => out(json!({"type": "error", "message": format!("bad message: {e}")})),
         }
     }
-    // Without the browser nobody controls the renderer: stop it, the proxy ends with us.
-    if let Some(session) = host.current() {
-        let _ = session.renderer.stop();
-    }
-    Ok(())
+    // Without the browser nobody controls the renderer: it stops, and so does this program.
+    let _ = tx.send(Msg::Quit);
+    thread::sleep(Duration::from_millis(1500));
+    std::process::exit(0);
 }
 
-fn handle(host: &Arc<Host>, message: Value) {
+fn queue(message: &Value) -> Vec<Track> {
+    message["queue"].as_array().map(|q| q.iter().map(Track::from_json).collect()).unwrap_or_default()
+}
+
+fn handle(out: &Out, tx: &Sender<Msg>, message: Value) {
     let text = |key: &str| message[key].as_str().unwrap_or("").to_string();
-    match message["cmd"].as_str().unwrap_or("") {
+    let msg = match message["cmd"].as_str().unwrap_or("") {
         "discover" => {
-            let host = host.clone();
-            thread::spawn(move || discover(&host));
+            let out = out.clone();
+            thread::spawn(move || discover(&out));
+            return;
         }
-        "cast" => {
-            let generation = host.generation.fetch_add(1, Ordering::SeqCst) + 1;
-            let host = host.clone();
-            let (renderer, video_id, mode, address) = (text("renderer"), text("videoId"), text("mode"), text("host"));
-            let start = message["start"].as_u64().unwrap_or(0);
-            thread::spawn(move || {
-                if let Err(e) = cast(&host, generation, &renderer, &video_id, &mode, &address, start) {
-                    host.error(e, &video_id);
-                }
-            });
+        "cast" => Msg::Cast {
+            renderer: text("renderer"),
+            video_id: text("videoId"),
+            queue: queue(&message),
+            autoplay: message["autoplay"].as_bool().unwrap_or(false),
+            music: text("mode") == "music",
+            start: message["start"].as_f64().unwrap_or(0.0) as u64,
+            host: text("host"),
+        },
+        "queue" => Msg::Queue(queue(&message), message["autoplay"].as_bool().unwrap_or(false)),
+        "play" => Msg::Play,
+        "pause" => Msg::Pause,
+        "toggle" => Msg::Toggle,
+        "seek" => Msg::Seek(message["seconds"].as_f64().unwrap_or(0.0) as u64),
+        "next" => Msg::Next,
+        "previous" => Msg::Previous,
+        "stop" => Msg::Stop,
+        "volume" => Msg::Volume(message["value"].as_f64().unwrap_or(0.0).clamp(0.0, 100.0) as u32),
+        other => {
+            out(json!({"type": "error", "message": format!("unknown command {other:?}")}));
+            return;
         }
-        command @ ("play" | "pause" | "seek" | "stop") => {
-            let Some(session) = host.current() else { return };
-            if command == "stop" {
-                host.generation.fetch_add(1, Ordering::SeqCst);
-                *host.session.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            }
-            let seconds = message["seconds"].as_f64().unwrap_or(0.0) as u64;
-            let host = host.clone();
-            let command = command.to_string();
-            thread::spawn(move || {
-                let r = &session.renderer;
-                let result = match command.as_str() {
-                    "play" => r.play(),
-                    "pause" => r.pause(),
-                    "seek" => r.seek(seconds),
-                    _ => r.stop(),
-                };
-                if let Err(e) = result {
-                    host.error(e, &session.video_id);
-                }
-            });
-        }
-        other => host.error(format!("unknown command {other:?}"), ""),
-    }
+    };
+    let _ = tx.send(msg);
 }
 
-fn discover(host: &Host) {
+fn discover(out: &Out) {
     let urls = match dlna::discover(Duration::from_secs(3)) {
         Ok(urls) => urls,
-        Err(e) => return host.error(format!("discovery failed: {e}"), ""),
+        Err(e) => return out(json!({"type": "error", "message": format!("discovery failed: {e}")})),
     };
     // Descriptions in parallel; devices without AVTransport (not renderers) are left out.
     let found: Vec<Value> = thread::scope(|s| {
@@ -148,86 +134,5 @@ fn discover(host: &Host) {
             .filter_map(|(url, r)| r.ok().map(|r| json!({"url": url, "name": r.name, "modes": r.modes()})))
             .collect()
     });
-    host.send(json!({"type": "renderers", "renderers": found}));
-}
-
-fn cast(host: &Host, generation: u64, renderer_url: &str, video_id: &str, mode: &str, address: &str, start: u64)
-        -> io::Result<()> {
-    let renderer = Renderer::open(renderer_url)?;
-    let info = youtube::resolve(video_id)?;
-    if host.generation.load(Ordering::SeqCst) != generation {
-        return Ok(()); // Another video was cast meanwhile.
-    }
-    let address = if address.is_empty() { renderer.local_address()?.to_string() } else { address.to_string() };
-    // "video" or "music": the renderer's best format for it; or a mode given as is.
-    let mode = match mode {
-        "" | "video" | "music" => renderer.mode_for(if mode == "music" { "music" } else { "video" })
-            .ok_or_else(|| io::Error::other(format!("{} spielt keines der Formate ab", renderer.name)))?,
-        other => other,
-    };
-    let media = crate::serve(&info, mode, &address)?;
-    if host.generation.load(Ordering::SeqCst) != generation {
-        return Ok(());
-    }
-    renderer.load(&media.uri, &media.metadata)?;
-    eprintln!("ytdlna host: {} ({}) on {}", info.title, media.label, renderer.name);
-    host.send(json!({"type": "casting", "videoId": info.id, "title": info.title, "channel": info.channel,
-                     "duration": info.duration, "label": media.label, "renderer": renderer.name}));
-    *host.session.lock().unwrap_or_else(|e| e.into_inner()) = Some(Session {
-        generation, renderer: renderer.clone(), video_id: info.id.clone(), duration: info.duration,
-    });
-    if start > 3 {
-        // Renderers seek only once they play.
-        for _ in 0..20 {
-            thread::sleep(Duration::from_millis(500));
-            if matches!(renderer.status(), Ok((state, _)) if state == "PLAYING") {
-                break;
-            }
-        }
-        renderer.seek(start)?;
-    }
-    Ok(())
-}
-
-/// Reports the renderer's state every second and notices the end of a video.
-fn follow(host: &Host) {
-    let mut played_generation = 0;
-    let mut last_position = 0;
-    let mut position_generation = 0;
-    loop {
-        thread::sleep(Duration::from_secs(1));
-        let Some(session) = host.current() else { continue };
-        let Ok((state, position)) = session.renderer.status() else { continue };
-        if host.generation.load(Ordering::SeqCst) != session.generation {
-            continue; // The answer is about an older video.
-        }
-        let position = dlna::seconds(&position);
-        if position_generation != session.generation {
-            position_generation = session.generation;
-            last_position = 0;
-        }
-        host.send(json!({"type": "status", "videoId": session.video_id, "state": state,
-                         "position": position, "duration": session.duration}));
-        let near_end = session.duration > 0 && last_position + 5 >= session.duration;
-        // Some renderers report the end of an HLS stream as playing at 0 instead of stopped.
-        let wrapped = state == "PLAYING" && near_end && position + 10 < last_position;
-        if state == "PLAYING" && !wrapped {
-            played_generation = session.generation;
-            last_position = position;
-            continue;
-        }
-        if played_generation == session.generation && (wrapped || state == "STOPPED" || state == "NO_MEDIA_PRESENT") {
-            // Renderers often report position 0 once stopped: judge by the last one seen.
-            let ended = session.duration == 0 || near_end;
-            if wrapped {
-                let _ = session.renderer.stop();
-            }
-            host.send(json!({"type": if ended { "ended" } else { "stopped" }, "videoId": session.video_id}));
-            played_generation = 0;
-            let mut current = host.session.lock().unwrap_or_else(|e| e.into_inner());
-            if current.as_ref().is_some_and(|s| s.generation == session.generation) {
-                *current = None;
-            }
-        }
-    }
+    out(json!({"type": "renderers", "renderers": found}));
 }

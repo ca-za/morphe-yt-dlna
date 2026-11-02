@@ -163,7 +163,8 @@ function renderMenu() {
 function castOn(url) {
   const id = videoId();
   if (!id) return;
-  browser.runtime.sendMessage({ type: "castHere", url, videoId: id, position: adShowing() ? 0 : localTime(), music });
+  browser.runtime.sendMessage({ type: "castHere", url, videoId: id, position: adShowing() ? 0 : localTime(), music,
+                                queue: readQueue(), autoplay: isAutoplay() });
   closeMenu();
 }
 

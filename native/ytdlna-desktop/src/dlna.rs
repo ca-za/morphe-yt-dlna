@@ -1,4 +1,4 @@
-//! Finding renderers (SSDP) and driving them over AVTransport.
+//! Finding renderers (SSDP), reading their services and calling them (SOAP).
 
 use std::collections::BTreeSet;
 use std::io;
@@ -38,12 +38,22 @@ pub fn discover(wait: Duration) -> io::Result<Vec<String>> {
     Ok(found.into_iter().collect())
 }
 
+#[derive(Clone, Debug)]
+pub struct Service {
+    /// "urn:schemas-upnp-org:service:AVTransport:1", "urn:av-openhome-org:service:Playlist:1", ...
+    pub kind: String,
+    pub control_url: String,
+}
+
 #[derive(Clone)]
 pub struct Renderer {
+    pub description_url: String,
     pub name: String,
+    pub manufacturer: String,
+    /// "uuid:...", for Sonos "uuid:RINCON_..."
+    pub udn: String,
     pub host: String,
-    control_url: String,
-    service: String,
+    services: Vec<Service>,
     /// The formats the renderer plays (ConnectionManager's sink protocols), if it told.
     sink: Option<String>,
 }
@@ -55,32 +65,66 @@ impl Renderer {
             .call()
             .map_err(io::Error::other)?
             .into_string()?;
-        let name = tag(&xml, "friendlyName").unwrap_or_default();
         let base = description_url.splitn(4, '/').take(3).collect::<Vec<_>>().join("/");
         let host = base.rsplit('/').next().unwrap_or("").rsplit_once(':').map_or("", |h| h.0).to_string();
         let absolute = |control: String| {
             if control.starts_with("http") { control } else { format!("{base}/{}", control.trim_start_matches('/')) }
         };
-        // The services of the device with the AVTransport: a sibling device's ConnectionManager
-        // (Sonos: the media server) lists other formats.
-        for list in xml.split("<serviceList>").skip(1) {
-            let list = list.split("</serviceList>").next().unwrap_or("");
-            let mut transport = None;
-            let mut connection_manager = None;
-            for service in list.split("<service>").skip(1) {
-                let kind = tag(service, "serviceType").unwrap_or_default();
-                let control = absolute(tag(service, "controlURL").unwrap_or_default());
-                if kind.starts_with("urn:schemas-upnp-org:service:AVTransport:") {
-                    transport = Some((kind, control));
-                } else if kind.starts_with("urn:schemas-upnp-org:service:ConnectionManager:") {
-                    connection_manager = Some((kind, control));
-                }
+        // The services of the (sub)device with the AVTransport: a sibling device's services
+        // (Sonos: the media server's ConnectionManager) are about something else.
+        let parts: Vec<&str> = xml.split("<serviceList>").collect();
+        for index in 1..parts.len() {
+            let list = parts[index].split("</serviceList>").next().unwrap_or("");
+            let services: Vec<Service> = list.split("<service>").skip(1).map(|service| Service {
+                kind: tag(service, "serviceType").unwrap_or_default(),
+                control_url: absolute(tag(service, "controlURL").unwrap_or_default()),
+            }).collect();
+            if !services.iter().any(|s| s.kind.contains(":service:AVTransport:")) {
+                continue;
             }
-            let Some((service, control_url)) = transport else { continue };
-            let sink = connection_manager.and_then(|(kind, url)| sink_protocols(&kind, &url).ok());
-            return Ok(Renderer { name, host, control_url, service, sink });
+            // The device element this service list belongs to: its name and UDN come before it.
+            let device = parts[index - 1].rsplit("<device>").next().unwrap_or("");
+            let mut renderer = Renderer {
+                description_url: description_url.to_string(),
+                name: tag(device, "friendlyName").or_else(|| tag(&xml, "friendlyName")).unwrap_or_default(),
+                manufacturer: tag(device, "manufacturer").or_else(|| tag(&xml, "manufacturer")).unwrap_or_default(),
+                udn: tag(device, "UDN").or_else(|| tag(&xml, "UDN")).unwrap_or_default(),
+                host,
+                services,
+                sink: None,
+            };
+            renderer.sink = renderer.call("ConnectionManager", "GetProtocolInfo", &[])
+                .ok().and_then(|r| tag(&r, "Sink"));
+            return Ok(renderer);
         }
-        Err(io::Error::other(format!("{name} has no AVTransport service")))
+        Err(io::Error::other(format!("{description_url} has no AVTransport service")))
+    }
+
+    pub fn service(&self, name: &str) -> Option<&Service> {
+        let needle = format!(":service:{name}:");
+        self.services.iter().find(|s| s.kind.contains(&needle))
+    }
+
+    pub fn has(&self, name: &str) -> bool {
+        self.service(name).is_some()
+    }
+
+    pub fn is_sonos(&self) -> bool {
+        self.manufacturer.to_ascii_lowercase().contains("sonos")
+    }
+
+    /// Calls `action` of the service `name` ("AVTransport", "Playlist", ...). UPnP AV services
+    /// (AVTransport, RenderingControl, GroupRenderingControl) get InstanceID 0 first.
+    pub fn call(&self, name: &str, action: &str, args: &[(&str, &str)]) -> io::Result<String> {
+        let service = self.service(name).ok_or_else(|| io::Error::other(format!("{} has no {name}", self.name)))?;
+        let mut body = String::new();
+        if matches!(name, "AVTransport" | "RenderingControl" | "GroupRenderingControl") {
+            body.push_str("<InstanceID>0</InstanceID>");
+        }
+        for (key, value) in args {
+            body.push_str(&format!("<{key}>{}</{key}>", escape(value)));
+        }
+        soap(&service.control_url, &service.kind, action, &body)
     }
 
     /// What this renderer can play of what we serve, best first for videos: "hls" (H.264 up to
@@ -110,74 +154,63 @@ impl Renderer {
         let modes = self.modes();
         if kind == "music" {
             // Songs as sound; a renderer without audio types gets the small video.
-            for mode in ["audio", "muxed", "hls"] {
-                if modes.contains(&mode) {
-                    return Some(mode);
-                }
-            }
-            return None;
+            return ["audio", "muxed", "hls"].into_iter().find(|m| modes.contains(m));
         }
         modes.first().copied()
     }
 
-    fn call(&self, action: &str, args: &[(&str, &str)]) -> io::Result<String> {
-        let mut body = format!(
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
-             s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{}\"><InstanceID>0</InstanceID>",
-            self.service
-        );
-        for (key, value) in args {
-            body.push_str(&format!("<{key}>{}</{key}>", escape(value)));
-        }
-        body.push_str(&format!("</u:{action}></s:Body></s:Envelope>"));
-        let response = ureq::post(&self.control_url)
-            .timeout(Duration::from_secs(10))
-            .set("Content-Type", "text/xml; charset=\"utf-8\"")
-            .set("SOAPACTION", &format!("\"{}#{action}\"", self.service))
-            .send_string(&body);
-        match response {
-            Ok(r) => Ok(r.into_string()?),
-            Err(ureq::Error::Status(code, r)) => {
-                let text = r.into_string().unwrap_or_default();
-                Err(io::Error::other(format!(
-                    "{action}: HTTP {code} {} {}",
-                    tag(&text, "errorCode").unwrap_or_default(),
-                    tag(&text, "errorDescription").unwrap_or_default()
-                )))
-            }
-            Err(e) => Err(io::Error::other(format!("{action}: {e}"))),
-        }
-    }
+    // AVTransport
 
     pub fn load(&self, uri: &str, metadata: &str) -> io::Result<()> {
         // Some renderers refuse a new URI while playing.
-        let _ = self.call("Stop", &[]);
-        self.call("SetAVTransportURI", &[("CurrentURI", uri), ("CurrentURIMetaData", metadata)])?;
-        self.call("Play", &[("Speed", "1")]).map(|_| ())
+        let _ = self.call("AVTransport", "Stop", &[]);
+        self.call("AVTransport", "SetAVTransportURI", &[("CurrentURI", uri), ("CurrentURIMetaData", metadata)])?;
+        self.play()
+    }
+
+    pub fn set_next(&self, uri: &str, metadata: &str) -> io::Result<()> {
+        self.call("AVTransport", "SetNextAVTransportURI", &[("NextURI", uri), ("NextURIMetaData", metadata)]).map(|_| ())
     }
 
     pub fn play(&self) -> io::Result<()> {
-        self.call("Play", &[("Speed", "1")]).map(|_| ())
+        self.call("AVTransport", "Play", &[("Speed", "1")]).map(|_| ())
     }
 
     pub fn pause(&self) -> io::Result<()> {
-        self.call("Pause", &[]).map(|_| ())
+        self.call("AVTransport", "Pause", &[]).map(|_| ())
     }
 
     pub fn stop(&self) -> io::Result<()> {
-        self.call("Stop", &[]).map(|_| ())
+        self.call("AVTransport", "Stop", &[]).map(|_| ())
     }
 
     pub fn seek(&self, seconds: u64) -> io::Result<()> {
-        let target = format!("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60);
-        self.call("Seek", &[("Unit", "REL_TIME"), ("Target", &target)]).map(|_| ())
+        self.call("AVTransport", "Seek", &[("Unit", "REL_TIME"), ("Target", &clock(seconds))]).map(|_| ())
     }
 
-    /// Transport state ("PLAYING", "TRANSITIONING", "STOPPED", ...) and position "H:MM:SS".
-    pub fn status(&self) -> io::Result<(String, String)> {
-        let state = tag(&self.call("GetTransportInfo", &[])?, "CurrentTransportState").unwrap_or_default();
-        let position = tag(&self.call("GetPositionInfo", &[])?, "RelTime").unwrap_or_default();
-        Ok((state, position))
+    /// Transport state ("PLAYING", "TRANSITIONING", "STOPPED", ...), position and duration in
+    /// seconds, and the URI that plays.
+    pub fn status(&self) -> io::Result<(String, u64, u64, String)> {
+        let state = tag(&self.call("AVTransport", "GetTransportInfo", &[])?, "CurrentTransportState").unwrap_or_default();
+        let info = self.call("AVTransport", "GetPositionInfo", &[])?;
+        Ok((
+            state,
+            seconds(&tag(&info, "RelTime").unwrap_or_default()),
+            seconds(&tag(&info, "TrackDuration").unwrap_or_default()),
+            tag(&info, "TrackURI").unwrap_or_default(),
+        ))
+    }
+
+    // Volume (0-100)
+
+    pub fn volume(&self) -> io::Result<u32> {
+        let r = self.call("RenderingControl", "GetVolume", &[("Channel", "Master")])?;
+        Ok(tag(&r, "CurrentVolume").and_then(|v| v.parse().ok()).unwrap_or(0))
+    }
+
+    pub fn set_volume(&self, volume: u32) -> io::Result<()> {
+        self.call("RenderingControl", "SetVolume", &[("Channel", "Master"), ("DesiredVolume", &volume.min(100).to_string())])
+            .map(|_| ())
     }
 
     /// The address of this computer that the renderer reaches.
@@ -188,25 +221,36 @@ impl Renderer {
     }
 }
 
-/// GetProtocolInfo: the renderer's sink protocols ("http-get:*:video/mp4:*,...").
-fn sink_protocols(service: &str, control_url: &str) -> io::Result<String> {
+/// One SOAP action; the error names the UPnP error code and description.
+pub fn soap(control_url: &str, service_type: &str, action: &str, arguments: &str) -> io::Result<String> {
     let body = format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
-         s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:GetProtocolInfo xmlns:u=\"{service}\"/></s:Body></s:Envelope>"
+         s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{service_type}\">\
+         {arguments}</u:{action}></s:Body></s:Envelope>"
     );
     let response = ureq::post(control_url)
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(10))
         .set("Content-Type", "text/xml; charset=\"utf-8\"")
-        .set("SOAPACTION", &format!("\"{service}#GetProtocolInfo\""))
-        .send_string(&body)
-        .map_err(io::Error::other)?
-        .into_string()?;
-    Ok(tag(&response, "Sink").unwrap_or_default())
+        .set("SOAPACTION", &format!("\"{service_type}#{action}\""))
+        .send_string(&body);
+    match response {
+        Ok(r) => Ok(r.into_string()?),
+        Err(ureq::Error::Status(code, r)) => {
+            let text = r.into_string().unwrap_or_default();
+            Err(io::Error::other(format!(
+                "{action}: HTTP {code} {} {}",
+                tag(&text, "errorCode").unwrap_or_default(),
+                tag(&text, "errorDescription").unwrap_or_default()
+            )))
+        }
+        Err(e) => Err(io::Error::other(format!("{action}: {e}"))),
+    }
 }
 
-/// Text of the first `<name>` element (any namespace prefix).
-fn tag(xml: &str, name: &str) -> Option<String> {
-    let start = xml.find(&format!(":{name}>")).or_else(|| xml.find(&format!("<{name}>")))?;
+/// Text of the first `<name>` element (any namespace prefix), unescaped.
+pub fn tag(xml: &str, name: &str) -> Option<String> {
+    let start = xml.find(&format!(":{name}>")).or_else(|| xml.find(&format!("<{name}>")))
+        .or_else(|| xml.find(&format!("<{name} ")))?;
     let open_end = xml[start..].find('>')? + start + 1;
     let close = xml[open_end..].find("</")? + open_end;
     Some(unescape(&xml[open_end..close]))
@@ -216,7 +260,7 @@ pub fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
 }
 
-fn unescape(s: &str) -> String {
+pub fn unescape(s: &str) -> String {
     s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
 }
 
@@ -227,13 +271,20 @@ pub fn seconds(time: &str) -> u64 {
     }).unwrap_or(0)
 }
 
+/// "H:MM:SS" of seconds.
+pub fn clock(seconds: u64) -> String {
+    format!("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn renderer(sink: Option<&str>) -> Renderer {
-        Renderer { name: String::new(), host: String::new(), control_url: String::new(), service: String::new(),
-                   sink: sink.map(str::to_string) }
+        Renderer {
+            description_url: String::new(), name: String::new(), manufacturer: String::new(), udn: String::new(),
+            host: String::new(), services: Vec::new(), sink: sink.map(str::to_string),
+        }
     }
 
     #[test]
@@ -251,5 +302,12 @@ mod tests {
         let picture_frame = renderer(Some("http-get:*:image/jpeg:*"));
         assert_eq!(picture_frame.mode_for("video"), None);
         assert_eq!(renderer(None).modes().len(), 3);
+    }
+
+    #[test]
+    fn time_strings() {
+        assert_eq!(seconds("1:02:03.500"), 3723);
+        assert_eq!(seconds("NOT_IMPLEMENTED"), 0);
+        assert_eq!(clock(3723), "1:02:03");
     }
 }

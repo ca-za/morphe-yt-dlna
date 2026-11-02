@@ -109,7 +109,143 @@ document.addEventListener("keydown", (event) => {
 function newVideo(id) {
   castId = id;
   tvPosition = 0;
-  browser.runtime.sendMessage({ type: "video", videoId: id, music });
+  browser.runtime.sendMessage({ type: "video", videoId: id, music, queue: readQueue(), autoplay: isAutoplay() });
+}
+
+// The tab's queue, for the renderer's playlist. Read from the page's own data (wrappedJSObject:
+// the page's objects, not their DOM).
+
+function runText(value) {
+  if (!value) return "";
+  if (typeof value.simpleText === "string") return value.simpleText;
+  let text = "";
+  const runs = value.runs;
+  if (runs) for (let i = 0; i < runs.length; i++) text += runs[i].text;
+  return text;
+}
+
+function lastThumbnail(value) {
+  const list = value && value.thumbnails;
+  return list && list.length ? String(list[list.length - 1].url).split("=w")[0] : "";
+}
+
+function clockSeconds(text) {
+  return String(text || "").split(":").reduce((total, part) => total * 60 + (parseInt(part, 10) || 0), 0);
+}
+
+function musicQueue() {
+  const queue = document.querySelector("ytmusic-player-queue");
+  if (!queue) return [];
+  const tracks = [];
+  for (const element of queue.querySelectorAll("ytmusic-player-queue-item")) {
+    const data = element.wrappedJSObject && element.wrappedJSObject.data;
+    if (!data || !data.videoId) continue;
+    // "Artist • Album • Year" for songs, "Artist • 1.2M views" for videos.
+    const byline = runText(data.longBylineText).split(" • ");
+    const year = byline.length >= 3 && /^\d{4}$/.test(byline[byline.length - 1]) ? byline[byline.length - 1] : "";
+    tracks.push({
+      videoId: String(data.videoId),
+      title: runText(data.title),
+      artist: runText(data.shortBylineText) || byline[0] || "",
+      album: year ? byline.slice(1, -1).join(" • ") : "",
+      year,
+      art: lastThumbnail(data.thumbnail),
+      duration: clockSeconds(runText(data.lengthText)),
+    });
+  }
+  return tracks;
+}
+
+function youtubeQueue() {
+  const p = api();
+  if (!p) return [];
+  const titles = {};
+  for (const element of document.querySelectorAll("ytd-playlist-panel-video-renderer")) {
+    const data = element.wrappedJSObject && element.wrappedJSObject.data;
+    if (data && data.videoId) {
+      titles[data.videoId] = { title: runText(data.title), artist: runText(data.shortBylineText),
+                               duration: clockSeconds(runText(data.lengthText)) };
+    }
+  }
+  const playlist = p.getPlaylist && p.getPlaylist();
+  if (playlist && playlist.length) {
+    const tracks = [];
+    for (let i = 0; i < playlist.length; i++) {
+      const id = String(playlist[i]);
+      tracks.push(Object.assign({ videoId: id }, titles[id] || {}));
+    }
+    return tracks;
+  }
+  // A single video: it and what autoplay plays next.
+  const data = p.getVideoData && p.getVideoData();
+  const id = videoId();
+  if (!id) return [];
+  const tracks = [{ videoId: id, title: data ? String(data.title || "") : "", artist: data ? String(data.author || "") : "" }];
+  const toggle = document.querySelector(".ytp-autonav-toggle-button");
+  if (!toggle || toggle.getAttribute("aria-checked") === "true") {
+    try {
+      const response = p.getWatchNextResponse();
+      const next = response.contents.twoColumnWatchNextResults.autoplay.autoplay.sets[0].autoplayVideo.watchEndpoint.videoId;
+      if (next && next !== id) tracks.push({ videoId: String(next) });
+    } catch (e) {
+      // No autoplay video.
+    }
+  }
+  return tracks;
+}
+
+// A single YouTube video: its queue is just it and what autoplay plays next.
+function isAutoplay() {
+  if (music) return false;
+  const p = api();
+  const playlist = p && p.getPlaylist && p.getPlaylist();
+  return !(playlist && playlist.length);
+}
+
+function readQueue() {
+  try {
+    return music ? musicQueue() : youtubeQueue();
+  } catch (e) {
+    return [];
+  }
+}
+
+let sentQueue = "";
+
+function sendQueue() {
+  const queue = readQueue();
+  const key = queue.map((t) => t.videoId).join(",");
+  if (!queue.length || key === sentQueue) return;
+  sentQueue = key;
+  browser.runtime.sendMessage({ type: "queue", queue, autoplay: isAutoplay() });
+}
+
+// The renderer moved on to another title: the tab follows, its player held paused.
+function goTo(id) {
+  if (id === videoId()) return;
+  castId = id;
+  tvPosition = 0;
+  if (music) {
+    for (const element of document.querySelectorAll("ytmusic-player-queue ytmusic-player-queue-item")) {
+      const data = element.wrappedJSObject && element.wrappedJSObject.data;
+      if (data && data.videoId === id) {
+        const play = element.querySelector("ytmusic-play-button-renderer, .song-info");
+        (play || element).click();
+        return;
+      }
+    }
+  } else {
+    const p = api();
+    const playlist = p && p.getPlaylist && p.getPlaylist();
+    if (playlist && playlist.length) {
+      for (let i = 0; i < playlist.length; i++) {
+        if (String(playlist[i]) === id) return p.playVideoAt(i);
+      }
+    }
+    const queue = youtubeQueue();
+    if (p && queue.length > 1 && queue[1].videoId === id) return p.nextVideo();
+  }
+  location.assign(`${location.origin}/watch?v=${id}`);
 }
 
 function next() {
@@ -120,12 +256,17 @@ function next() {
 browser.runtime.onMessage.addListener((message) => {
   switch (message.type) {
     case "current":
-      return Promise.resolve({ videoId: videoId(), position: adShowing() ? 0 : localTime(), music });
+      return Promise.resolve({ videoId: videoId(), position: adShowing() ? 0 : localTime(), music, queue: readQueue(),
+                               autoplay: isAutoplay() });
+    case "goto":
+      if (casting) goTo(message.videoId);
+      return;
     case "hold": {
       const v = element();
       wasMuted = v ? v.muted : false;
       casting = true;
       castId = videoId();
+      sentQueue = "";
       hold();
       return;
     }
@@ -161,4 +302,5 @@ setInterval(() => {
   hold();
   const id = videoId();
   if (id && id !== castId) newVideo(id);
+  else sendQueue();
 }, 1000);
