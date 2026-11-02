@@ -100,13 +100,24 @@ function toggle(event) {
   browser.runtime.sendMessage({ type: "control", cmd: "toggle" });
 }
 
-const PLAY_BUTTONS = music ? "#play-pause-button" : ".ytp-play-button";
-// A click on the video picture toggles playback in YouTube too.
-const VIDEO_AREA = music ? "#song-video, #movie_player .html5-video-container" : "#movie_player .html5-video-container";
+// YouTube Music: the player bar (ytmusic-player-bar) or, in its newer layout, ytmusic-miniplayer.
+const PLAY_BUTTONS = music ? "#play-pause-button, .ytmusicPlayerControlsPlayPauseButton" : ".ytp-play-button";
+// A click on the video picture (YouTube Music: also the cover) toggles playback in YouTube too.
+const VIDEO_AREA = music
+  ? "ytmusic-player #song-image, ytmusic-player #song-media-window, ytmusic-player #song-video, #movie_player .html5-video-container"
+  : "#movie_player .html5-video-container";
+// Controls inside that area (YouTube Music's buttons over the cover) keep their own clicks.
+const CONTROLS = "button, a, [role=button], yt-icon-button, tp-yt-paper-icon-button, .top-row-buttons, input";
 
 document.addEventListener("click", (event) => {
   if (!casting || !alive() || adShowing() || !(event.target instanceof Element)) return;
-  if (event.target.closest(PLAY_BUTTONS) || event.target.closest(VIDEO_AREA)) toggle(event);
+  const target = event.target;
+  if (target.closest(PLAY_BUTTONS)) return toggle(event);
+  const area = target.closest(VIDEO_AREA);
+  if (!area) return;
+  const control = target.closest(CONTROLS);
+  if (control && area.contains(control)) return;
+  toggle(event);
 }, true);
 
 document.addEventListener("keydown", (event) => {
@@ -259,7 +270,9 @@ function goTo(id) {
 }
 
 function next() {
-  const button = document.querySelector(music ? "ytmusic-player-bar .next-button" : ".ytp-next-button");
+  const button = document.querySelector(music
+    ? "ytmusic-player-bar .next-button, .ytmusicPlayerControlsNextButton button"
+    : ".ytp-next-button");
   if (button) button.click();
 }
 

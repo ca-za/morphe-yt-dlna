@@ -1,25 +1,44 @@
 // The cast button in the player (YouTube: next to the subtitles button; YouTube Music: in the
-// player bar before repeat) and its device menu. Uses videoId(), localTime(), adShowing() and
+// player bar before repeat, or in the newer bar before the volume) and its device menu. Uses videoId(), localTime(), adShowing() and
 // music from content.js.
 
-const CAST_ICON_PATHS =
-  '<path d="M21 3H3a2 2 0 0 0-2 2v3h2V5h18v14h-7v2h7a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/>' +
-  '<path d="M1 18v3h3a3 3 0 0 0-3-3zm0-4v2a5 5 0 0 1 5 5h2a7 7 0 0 0-7-7zm0-4v2a9 9 0 0 1 9 9h2A11 11 0 0 0 1 10z"/>';
-const CAST_ICON = `<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">${CAST_ICON_PATHS}</svg>`;
+// Built element by element: YouTube Music's Trusted Types policy refuses HTML strings.
+const SVG = "http://www.w3.org/2000/svg";
+const CAST_ICON_PATHS = [
+  "M21 3H3a2 2 0 0 0-2 2v3h2V5h18v14h-7v2h7a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z",
+  "M1 18v3h3a3 3 0 0 0-3-3zm0-4v2a5 5 0 0 1 5 5h2a7 7 0 0 0-7-7zm0-4v2a9 9 0 0 1 9 9h2A11 11 0 0 0 1 10z",
+];
+
+function castIcon() {
+  const svg = document.createElementNS(SVG, "svg");
+  for (const [k, v] of [["viewBox", "0 0 24 24"], ["width", "24"], ["height", "24"], ["fill", "currentColor"], ["aria-hidden", "true"]]) {
+    svg.setAttribute(k, v);
+  }
+  for (const d of CAST_ICON_PATHS) {
+    const path = document.createElementNS(SVG, "path");
+    path.setAttribute("d", d);
+    svg.appendChild(path);
+  }
+  return svg;
+}
 
 let ext = { state: null, here: false };
 let button = null;
 let menu = null;
 
-function makeButton() {
+// The button's color when not casting, as the controls around it.
+let baseColor = "#fff";
+
+function makeButton(miniplayer) {
   const b = document.createElement("button");
   b.className = music ? "ytdlna-cast" : "ytp-button ytdlna-cast";
   b.title = "Auf DLNA-Gerät abspielen";
   b.setAttribute("aria-label", b.title);
   b.setAttribute("aria-haspopup", "menu");
-  b.innerHTML = CAST_ICON;
+  b.appendChild(castIcon());
+  baseColor = music && !miniplayer ? "rgb(144,144,144)" : "#fff";
   const style = music
-    ? "width:40px;height:40px;padding:8px;margin:0 4px;border:0;background:none;cursor:pointer;color:rgb(144,144,144);display:inline-flex;align-items:center;justify-content:center;"
+    ? `width:40px;height:40px;padding:8px;margin:0 4px;border:0;border-radius:50%;background:none;cursor:pointer;color:${baseColor};display:inline-flex;align-items:center;justify-content:center;flex:none;`
     : "display:inline-flex;align-items:center;justify-content:center;color:#fff;";
   b.setAttribute("style", style);
   b.addEventListener("click", (event) => {
@@ -34,11 +53,14 @@ function makeButton() {
 // YouTube re-renders its controls now and then: put the button back when it is gone.
 function placeButton() {
   if (button && button.isConnected) return;
-  const anchor = music
-    ? document.querySelector("ytmusic-player-bar .right-controls-buttons .repeat")
-    : document.querySelector(".ytp-right-controls-left .ytp-subtitles-button");
+  const newer = music && document.querySelector("ytmusic-miniplayer .ytMusicMiniPlayerRightSection");
+  const anchor = !music
+    ? document.querySelector(".ytp-right-controls-left .ytp-subtitles-button")
+    : newer
+      ? newer.querySelector(".ytMusicMiniPlayerVolumeWrapper, .ytMusicMiniPlayerMenuButton")
+      : document.querySelector("ytmusic-player-bar .right-controls-buttons .repeat");
   if (!anchor) return;
-  button = makeButton();
+  button = makeButton(!!newer);
   anchor.parentNode.insertBefore(button, anchor);
   paintButton();
 }
@@ -46,7 +68,7 @@ function placeButton() {
 function paintButton() {
   if (!button) return;
   const active = ext.here && ext.state && (ext.state.casting || ext.state.loading);
-  button.style.color = active ? "#e53935" : music ? "rgb(144,144,144)" : "#fff";
+  button.style.color = active ? "#e53935" : baseColor;
   button.title = active && ext.state.casting
     ? `Läuft auf ${ext.state.casting.renderer}` : "Auf DLNA-Gerät abspielen";
 }
@@ -73,8 +95,13 @@ function openMenu() {
   const host = document.createElement("div");
   host.id = "ytdlna-menu";
   const root = host.attachShadow({ mode: "open" });
-  root.innerHTML = `<style>${MENU_STYLE}</style><div class="menu" role="menu"></div>`;
-  menu = { host, box: root.querySelector(".menu") };
+  const style = document.createElement("style");
+  style.textContent = MENU_STYLE;
+  const box = document.createElement("div");
+  box.className = "menu";
+  box.setAttribute("role", "menu");
+  root.append(style, box);
+  menu = { host, box };
   document.body.appendChild(host);
   renderMenu();
   browser.runtime.sendMessage({ type: "getTabState" }).then((s) => {
