@@ -7,6 +7,16 @@
 
 const music = location.hostname === "music.youtube.com";
 
+// After the extension was reloaded or updated, the script of the old version stays in open tabs,
+// cut off from it: it must not swallow the page's clicks any more.
+function alive() {
+  try {
+    return !!browser.runtime.id;
+  } catch (e) {
+    return false;
+  }
+}
+
 let casting = false;
 let castId = null;
 let tvPosition = 0;
@@ -55,7 +65,7 @@ function hold() {
   if (v !== video) {
     video = v;
     v.addEventListener("seeked", onSeeked);
-    v.addEventListener("play", () => casting && hold());
+    v.addEventListener("play", () => casting && alive() && hold());
   }
   v.muted = true;
   if (adShowing()) {
@@ -95,12 +105,12 @@ const PLAY_BUTTONS = music ? "#play-pause-button" : ".ytp-play-button";
 const VIDEO_AREA = music ? "#song-video, #movie_player .html5-video-container" : "#movie_player .html5-video-container";
 
 document.addEventListener("click", (event) => {
-  if (!casting || adShowing() || !(event.target instanceof Element)) return;
+  if (!casting || !alive() || adShowing() || !(event.target instanceof Element)) return;
   if (event.target.closest(PLAY_BUTTONS) || event.target.closest(VIDEO_AREA)) toggle(event);
 }, true);
 
 document.addEventListener("keydown", (event) => {
-  if (!casting || adShowing() || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (!casting || !alive() || adShowing() || event.ctrlKey || event.metaKey || event.altKey) return;
   const target = event.target;
   if (target instanceof Element && target.closest("input, textarea, [contenteditable='true'], [contenteditable='']")) return;
   if (event.key === " " || event.key === "k" || event.key === "K") toggle(event);
@@ -297,7 +307,13 @@ browser.runtime.onMessage.addListener((message) => {
 });
 
 // YouTube is a single page app: a click on another video changes the URL, not the page.
-setInterval(() => {
+const ticker = setInterval(() => {
+  if (!alive()) {
+    // The old version's script: the page is the page's again.
+    casting = false;
+    if (video) video.muted = wasMuted;
+    return clearInterval(ticker);
+  }
   if (!casting) return;
   hold();
   const id = videoId();

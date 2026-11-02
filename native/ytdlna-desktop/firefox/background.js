@@ -239,3 +239,12 @@ browser.storage.local.get(["renderer", "rendererName", "host"]).then((stored) =>
   }
   if (stored.host) state.host = stored.host;
 });
+
+// Tabs open before the extension was (re)loaded get its page scripts now, not only once reloaded.
+browser.tabs.query({ url: YOUTUBE }).then((tabs) => {
+  for (const tab of tabs) {
+    browser.tabs.executeScript(tab.id, { file: "content.js" })
+      .then(() => browser.tabs.executeScript(tab.id, { file: "castbutton.js" }))
+      .catch(() => {});
+  }
+});

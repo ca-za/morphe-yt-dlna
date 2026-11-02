@@ -249,5 +249,15 @@ browser.runtime.onMessage.addListener((message) => {
   if (Date.now() - volumeMovedAt > 2500 && !(volumeSlider && volumeSlider.matches(":active"))) renderMenu();
 });
 
-setInterval(placeButton, 1000);
+// A button of an earlier version of the extension (still in the page) makes way for this one.
+for (const old of document.querySelectorAll(".ytdlna-cast")) old.remove();
+const placer = setInterval(() => {
+  if (!alive()) {
+    clearInterval(placer);
+    closeMenu();
+    if (button) button.remove();
+    return;
+  }
+  placeButton();
+}, 1000);
 placeButton();
