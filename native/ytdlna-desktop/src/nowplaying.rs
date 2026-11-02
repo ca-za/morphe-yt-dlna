@@ -32,6 +32,14 @@ mod imp {
     }
 
     pub fn init(tx: Sender<Msg>) {
+        // An app of its own for macOS (no Dock icon): the media keys are given to apps, which
+        // this program is when run from its bundle (YT DLNA.app, see install-firefox-host.sh).
+        unsafe {
+            use objc::{class, msg_send, sel, sel_impl};
+            let app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
+            // NSApplicationActivationPolicyAccessory
+            let _: bool = msg_send![app, setActivationPolicy: 1i64];
+        }
         let config = PlatformConfig { dbus_name: "ytdlna", display_name: "YT DLNA", hwnd: None };
         if let Ok(controls) = MediaControls::new(config) {
             *state().lock().unwrap_or_else(|e| e.into_inner()) = Some(State { controls, tx, attached: false, position: 0 });

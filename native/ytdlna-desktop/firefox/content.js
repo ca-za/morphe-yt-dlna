@@ -27,9 +27,19 @@ let syncTarget = null;
 let userSeekAt = 0;
 let video = null;
 
+// The video in the player: from the address on watch pages; YouTube Music plays on while other
+// pages (albums, home) are shown, then the player knows it.
 function videoId() {
-  const id = new URL(location.href).searchParams.get("v");
-  return id && /^[\w-]{11}$/.test(id) ? id : null;
+  const valid = (id) => (id && /^[\w-]{11}$/.test(id) ? id : null);
+  const fromUrl = location.pathname === "/watch" ? valid(new URL(location.href).searchParams.get("v")) : null;
+  if (fromUrl) return fromUrl;
+  try {
+    const p = api();
+    const data = p && p.getVideoData && p.getVideoData();
+    return valid(data && String(data.video_id || ""));
+  } catch (e) {
+    return null;
+  }
 }
 
 function element() {

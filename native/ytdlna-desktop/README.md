@@ -5,8 +5,11 @@ Casts YouTube and YouTube Music from a Mac to DLNA renderers, with a Firefox ext
 
 ## Firefox
 
-1. `cargo build --release`, then `./install-firefox-host.sh` (registers the program for the
-   extension in `~/Library/Application Support/Mozilla/NativeMessagingHosts`).
+1. `cargo build --release`, then `./install-firefox-host.sh`: puts the program into a small
+   background app (`target/release/YT DLNA.app`, no Dock icon; macOS gives media keys to apps)
+   and registers it for the extension in `~/Library/Application Support/Mozilla/NativeMessagingHosts`.
+   Firefox starts it when the extension needs it and ends it with the extension (reloading the
+   extension restarts it); after a new build, run the script again.
 2. Firefox: `about:debugging` → This Firefox → Load Temporary Add-on → `firefox/manifest.json`.
    Release Firefox keeps unsigned extensions only until it restarts; for a lasting install the
    extension has to be signed (addons.mozilla.org, unlisted) or Firefox Developer Edition /
