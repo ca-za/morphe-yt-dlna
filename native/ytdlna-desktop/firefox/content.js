@@ -251,32 +251,60 @@ function sendQueue() {
   browser.runtime.sendMessage({ type: "queue", queue, autoplay: isAutoplay() });
 }
 
-// The renderer moved on to another title: the tab follows, its player held paused.
+// The renderer moved on to another title: the tab follows, its player held paused. Until the tab
+// shows that title, its own (older) one is not sent back to the renderer.
+let follow = null; // {id, until, fallback}
+
 function goTo(id) {
   if (id === videoId()) return;
   castId = id;
   tvPosition = 0;
+  follow = { id, until: Date.now() + 8000, fallback: Date.now() + 4000 };
+  const ids = readQueue().map((t) => t.videoId);
+  const here = ids.indexOf(videoId());
+  const there = ids.indexOf(id);
+  const p = api();
+  // A step forward or back: the player's own next and previous (YouTube Music keeps its queue).
+  if (p && here >= 0 && there === here + 1 && p.nextVideo) return p.nextVideo();
+  if (p && here >= 0 && there === here - 1 && p.previousVideo) return p.previousVideo();
   if (music) {
     for (const element of document.querySelectorAll("ytmusic-player-queue ytmusic-player-queue-item")) {
       const data = element.wrappedJSObject && element.wrappedJSObject.data;
       if (data && data.videoId === id) {
-        const play = element.querySelector("ytmusic-play-button-renderer, .song-info");
+        const play = element.querySelector("ytmusic-play-button-renderer, .song-info, .song-title");
         (play || element).click();
         return;
       }
     }
   } else {
-    const p = api();
     const playlist = p && p.getPlaylist && p.getPlaylist();
     if (playlist && playlist.length) {
       for (let i = 0; i < playlist.length; i++) {
         if (String(playlist[i]) === id) return p.playVideoAt(i);
       }
     }
-    const queue = youtubeQueue();
-    if (p && queue.length > 1 && queue[1].videoId === id) return p.nextVideo();
   }
-  location.assign(`${location.origin}/watch?v=${id}`);
+  followByAddress(id);
+}
+
+// The last way: the title's watch page (in its list, so the queue stays).
+function followByAddress(id) {
+  const list = new URL(location.href).searchParams.get("list");
+  location.assign(`${location.origin}/watch?v=${id}${list ? `&list=${encodeURIComponent(list)}` : ""}`);
+}
+
+/** While the tab follows the renderer: true if `id` (what the tab shows) is to be left alone. */
+function following(id) {
+  if (!follow) return false;
+  if (id === follow.id || Date.now() > follow.until) {
+    follow = null;
+    return false;
+  }
+  if (follow.fallback && Date.now() > follow.fallback) {
+    follow.fallback = 0;
+    followByAddress(follow.id);
+  }
+  return true;
 }
 
 function next() {
@@ -340,6 +368,19 @@ const ticker = setInterval(() => {
   if (!casting) return;
   hold();
   const id = videoId();
+  if (following(id)) return;
   if (id && id !== castId) newVideo(id);
   else sendQueue();
 }, 1000);
+
+// After a reload of the casting tab (it followed the renderer by its address, or the user reloaded):
+// the renderer still plays it, so the tab is held again.
+browser.runtime.sendMessage({ type: "getTabState" }).then((s) => {
+  if (!s || !s.here || !s.state.casting || casting) return;
+  const v = element();
+  wasMuted = v ? v.muted : false;
+  casting = true;
+  castId = s.state.casting.videoId;
+  sentQueue = "";
+  hold();
+}).catch(() => {});
