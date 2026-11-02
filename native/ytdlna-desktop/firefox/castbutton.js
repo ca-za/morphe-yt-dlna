@@ -64,7 +64,7 @@ const MENU_STYLE = `
   .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .muted { color: #aaa; padding: 8px 16px; }
   .error { color: #ff8a80; padding: 8px 16px; }
-  .volume { display: flex; align-items: center; gap: 12px; padding: 8px 16px; }
+  .volume { display: flex; align-items: center; gap: 12px; padding: 4px 16px 8px; }
   .volume input { flex: 1; accent-color: #e53935; }
   hr { border: 0; border-top: 1px solid rgba(255, 255, 255, .15); margin: 6px 0; }
 `;
@@ -147,6 +147,15 @@ function renderMenu() {
     }
     box.append(document.createElement("hr"));
     if (castingHere && s.status && typeof s.status.volume === "number") box.append(volumeRow(s.status.volume));
+    const sonos = castingHere && (s.renderers.find((r) => r.url === s.renderer) || {}).sonos;
+    if (sonos) {
+      box.append(item(roomsOpen ? "Räume ▾" : "Räume ▸", () => {
+        roomsOpen = !roomsOpen;
+        if (roomsOpen) askRooms();
+        renderMenu();
+      }));
+      if (roomsOpen) appendRooms(box, s);
+    }
     if (castingHere) {
       box.append(item("Wiedergabe beenden", () => {
         browser.runtime.sendMessage({ type: "control", cmd: "stop" });
@@ -167,7 +176,7 @@ let volumeMovedAt = 0;
 let volumeTimer = null;
 let volumeSlider = null;
 
-function volumeRow(volume) {
+function volumeRow(volume, onChange) {
   const row = document.createElement("label");
   row.className = "volume";
   const icon = document.createElement("span");
@@ -179,16 +188,50 @@ function volumeRow(volume) {
   slider.max = "100";
   slider.setAttribute("aria-label", "Lautstärke");
   // While it is moved the renderer's answer lags behind: the slider keeps its own value.
-  slider.value = volumeSlider && Date.now() - volumeMovedAt < 2500 ? volumeSlider.value : String(volume);
+  slider.value = String(volume);
   slider.addEventListener("click", (event) => event.stopPropagation());
   slider.addEventListener("input", () => {
     volumeMovedAt = Date.now();
     clearTimeout(volumeTimer);
-    volumeTimer = setTimeout(() => browser.runtime.sendMessage({ type: "control", cmd: "volume", value: Number(slider.value) }), 120);
+    volumeTimer = setTimeout(() => (onChange
+      ? onChange(Number(slider.value))
+      : browser.runtime.sendMessage({ type: "control", cmd: "volume", value: Number(slider.value) })), 120);
   });
-  volumeSlider = slider;
+  slider.addEventListener("pointerdown", () => (volumeSlider = slider));
   row.append(icon, slider);
   return row;
+}
+
+// Sonos rooms: which play along with the group, each with its volume.
+let roomsOpen = false;
+let roomsTimer = null;
+
+function askRooms() {
+  browser.runtime.sendMessage({ type: "rooms", cmd: "rooms" });
+  clearInterval(roomsTimer);
+  roomsTimer = setInterval(() => {
+    if (!menu || !roomsOpen) return clearInterval(roomsTimer);
+    browser.runtime.sendMessage({ type: "rooms", cmd: "rooms" });
+  }, 5000);
+}
+
+function appendRooms(box, s) {
+  const rooms = s.rooms && s.rooms.renderer === s.renderer ? s.rooms.rooms : null;
+  if (!rooms) return box.append(line("muted", "Lade Räume …"));
+  for (const room of rooms) {
+    const state = room.leading ? "führt" : room.in ? "spielt mit" : "";
+    const row = item(state ? `${room.name} · ${state}` : room.name, () => {
+      if (room.leading) return;
+      room.in = !room.in;
+      renderMenu();
+      browser.runtime.sendMessage({ type: "rooms", cmd: "room", id: room.id, in: room.in });
+    }, room.in);
+    box.append(row);
+    if (room.in && typeof room.volume === "number") {
+      box.append(volumeRow(room.volume, (value) =>
+        browser.runtime.sendMessage({ type: "rooms", cmd: "roomVolume", id: room.id, value })));
+    }
+  }
 }
 
 function castOn(url) {

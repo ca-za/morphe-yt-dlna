@@ -12,9 +12,13 @@
 //!     autoplay: the queue is the video and what autoplay plays next, not a list
 //!   {"cmd":"play"} {"cmd":"pause"} {"cmd":"toggle"} {"cmd":"seek","seconds":90}
 //!   {"cmd":"next"} {"cmd":"previous"} {"cmd":"stop"} {"cmd":"volume","value":30}
+//!   Sonos: {"cmd":"rooms","renderer":"..."}  {"cmd":"room","renderer":"...","id":"RINCON_...","in":true}
+//!          {"cmd":"roomVolume","renderer":"...","id":"RINCON_...","value":20}
 //! To the extension:
 //!   {"type":"renderers","renderers":[{"url":"...","name":"...","modes":["hls","muxed","audio"]}]}
-//!     modes: what the renderer plays of what we serve (empty: nothing)
+//!     modes: what the renderer plays of what we serve (empty: nothing); Sonos: "sonos":true,
+//!     one entry per group (its coordinator), named after its rooms
+//!   {"type":"rooms","renderer":"...","title":"Kitchen + 1","rooms":[{"id","name","leading","in","volume"}]}
 //!   {"type":"casting", "videoId", "title", "channel", "album", "year", "art", "duration", "label", "renderer"}
 //!   {"type":"track", ...the same}          the renderer moved on to this title by itself
 //!   {"type":"status","videoId":"...","state":"PLAYING","position":42,"duration":213,"volume":20}
@@ -22,9 +26,10 @@
 //!   {"type":"stopped","videoId":"..."}    the renderer stopped before the end (its remote)
 //!   {"type":"error","message":"...","videoId":"..."}
 
+use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::sync::mpsc::{channel, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -33,6 +38,7 @@ use serde_json::{json, Value};
 use crate::dlna::{self, Renderer};
 use crate::metadata::Track;
 use crate::session::{self, Msg, Out};
+use crate::sonos;
 
 pub fn run() -> io::Result<()> {
     // Started by Firefox the PATH is the system's: add Homebrew's for yt-dlp and deno.
@@ -96,6 +102,11 @@ fn handle(out: &Out, tx: &Sender<Msg>, message: Value) {
             thread::spawn(move || discover(&out));
             return;
         }
+        "rooms" | "room" | "roomVolume" => {
+            let out = out.clone();
+            thread::spawn(move || room_command(&out, &message));
+            return;
+        }
         "cast" => Msg::Cast {
             renderer: text("renderer"),
             video_id: text("videoId"),
@@ -128,11 +139,105 @@ fn discover(out: &Out) {
         Err(e) => return out(json!({"type": "error", "message": format!("discovery failed: {e}")})),
     };
     // Descriptions in parallel; devices without AVTransport (not renderers) are left out.
-    let found: Vec<Value> = thread::scope(|s| {
-        let handles: Vec<_> = urls.iter().map(|url| s.spawn(move || (url, Renderer::open(url)))).collect();
-        handles.into_iter().filter_map(|h| h.join().ok())
-            .filter_map(|(url, r)| r.ok().map(|r| json!({"url": url, "name": r.name, "modes": r.modes()})))
-            .collect()
+    let renderers: Vec<Renderer> = thread::scope(|s| {
+        let handles: Vec<_> = urls.iter().map(|url| s.spawn(move || Renderer::open(url))).collect();
+        handles.into_iter().filter_map(|h| h.join().ok()?.ok()).collect()
     });
+    for r in &renderers {
+        remember(r);
+    }
+    // Sonos: one entry per group, its coordinator (where a cast goes), named after its rooms.
+    let groups = renderers.iter().find(|r| sonos::is(r)).and_then(|r| sonos::topology(r).ok()).unwrap_or_default();
+    let found: Vec<Value> = renderers.iter().filter_map(|r| {
+        if !sonos::is(r) {
+            return Some(json!({"url": r.description_url, "name": r.name, "modes": r.modes()}));
+        }
+        let uuid = sonos::uuid(r);
+        match groups.iter().find(|g| g.contains(&uuid)) {
+            Some(g) if g.coordinator != uuid => None,
+            Some(g) => Some(json!({"url": r.description_url, "name": g.label(), "modes": r.modes(), "sonos": true})),
+            None => Some(json!({"url": r.description_url, "name": r.name, "modes": r.modes(), "sonos": true})),
+        }
+    }).collect();
     out(json!({"type": "renderers", "renderers": found}));
+}
+
+// Sonos rooms
+
+fn players() -> &'static Mutex<HashMap<String, Renderer>> {
+    static PLAYERS: OnceLock<Mutex<HashMap<String, Renderer>>> = OnceLock::new();
+    PLAYERS.get_or_init(Default::default)
+}
+
+fn remember(r: &Renderer) {
+    players().lock().unwrap_or_else(|e| e.into_inner()).insert(r.description_url.clone(), r.clone());
+}
+
+/// A player by its description URL, loaded once.
+fn player(url: &str) -> io::Result<Renderer> {
+    if let Some(r) = players().lock().unwrap_or_else(|e| e.into_inner()).get(url) {
+        return Ok(r.clone());
+    }
+    let r = Renderer::open(url)?;
+    remember(&r);
+    Ok(r)
+}
+
+/// The rooms of the household for the group `renderer` leads: which play along, their volumes.
+fn rooms(out: &Out, renderer: &str) -> io::Result<()> {
+    let lead = player(renderer)?;
+    let lead_uuid = sonos::uuid(&lead);
+    let groups = sonos::topology(&lead)?;
+    let own = groups.iter().find(|g| g.contains(&lead_uuid));
+    let zones: Vec<&sonos::Zone> = groups.iter().flat_map(|g| g.rooms()).collect();
+    let rooms: Vec<Value> = thread::scope(|s| {
+        let lead_uuid = &lead_uuid;
+        let handles: Vec<_> = zones.iter().map(|z| s.spawn(move || {
+            let volume = player(&z.location).and_then(|p| p.volume()).ok();
+            json!({"id": z.uuid, "name": z.name, "leading": z.uuid == *lead_uuid,
+                   "in": own.is_some_and(|g| g.contains(&z.uuid)), "volume": volume})
+        })).collect();
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    });
+    let mut rooms = rooms;
+    // The leading room first; it stays in (its playback is the cast).
+    rooms.sort_by_key(|r| !r["leading"].as_bool().unwrap_or(false));
+    out(json!({"type": "rooms", "renderer": renderer, "title": own.map(|g| g.label()).unwrap_or(lead.name.clone()),
+               "rooms": rooms}));
+    Ok(())
+}
+
+/// The zone's player, found through the topology the leading player knows.
+fn zone_player(renderer: &str, id: &str) -> io::Result<Renderer> {
+    let lead = player(renderer)?;
+    let groups = sonos::topology(&lead)?;
+    let zone = groups.iter().flat_map(|g| g.members.iter()).find(|z| z.uuid == id)
+        .ok_or_else(|| io::Error::other(format!("no room {id}")))?;
+    player(&zone.location)
+}
+
+fn room_command(out: &Out, message: &Value) {
+    let text = |key: &str| message[key].as_str().unwrap_or("").to_string();
+    let (renderer, id) = (text("renderer"), text("id"));
+    let result = (|| -> io::Result<()> {
+        match message["cmd"].as_str().unwrap_or("") {
+            "rooms" => return rooms(out, &renderer),
+            "room" => {
+                let member = zone_player(&renderer, &id)?;
+                if message["in"].as_bool().unwrap_or(false) {
+                    sonos::join(&member, &sonos::uuid(&player(&renderer)?))?;
+                } else {
+                    sonos::leave(&member)?;
+                }
+            }
+            _ => {
+                let volume = message["value"].as_f64().unwrap_or(0.0).clamp(0.0, 100.0) as u32;
+                zone_player(&renderer, &id)?.set_volume(volume)?;
+            }
+        }
+        rooms(out, &renderer)
+    })();
+    if let Err(e) = result {
+        out(json!({"type": "error", "message": format!("Räume: {e}")}));
+    }
 }

@@ -8,6 +8,7 @@ const state = {
   renderer: null, // description URL of the chosen renderer
   rendererName: "",
   unsupported: 0, // renderers found that play none of our formats
+  rooms: null, // Sonos: {renderer, title, rooms: [{id, name, leading, in, volume}]}
   searching: false,
   tabId: null, // the tab whose video plays on the renderer
   casting: null, // {videoId, title, channel, duration, label, renderer}
@@ -100,6 +101,9 @@ function fromNative(message) {
     case "stopped":
       release(null);
       break;
+    case "rooms":
+      state.rooms = message;
+      break;
     case "error":
       state.error = message.message;
       if (message.videoId && message.videoId === state.loading) state.loading = null;
@@ -162,6 +166,11 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
     case "select":
       select(message.url);
       changed();
+      return;
+    case "rooms":
+      // Sonos: the rooms of the group the renderer leads, to add or take out.
+      send({ cmd: message.cmd || "rooms", renderer: message.url || state.renderer, id: message.id, in: message.in,
+             value: message.value });
       return;
     case "castActiveTab": {
       // The active YouTube tab of this window, else of another one, else the last one used.

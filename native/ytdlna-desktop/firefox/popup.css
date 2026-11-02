@@ -18,3 +18,7 @@ button:disabled { opacity: .5; }
 #hidden { font-size: 12px; margin: 6px 0 0; }
 .volume { align-items: center; display: flex; gap: 8px; margin: 10px 0 0; }
 .volume input { accent-color: var(--accent); flex: 1; }
+#rooms { margin-top: 10px; }
+.room { align-items: center; display: flex; gap: 6px; margin-top: 6px; }
+.room span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room input[type=range] { accent-color: var(--accent); width: 90px; }

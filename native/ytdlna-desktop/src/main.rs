@@ -13,6 +13,7 @@ mod media;
 mod metadata;
 mod nowplaying;
 mod session;
+mod sonos;
 mod youtube;
 
 use std::process::ExitCode;

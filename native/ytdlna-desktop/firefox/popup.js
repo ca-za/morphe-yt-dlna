@@ -32,6 +32,7 @@ function render(state) {
     $("volume").disabled = volume === null;
     if (volume !== null && Date.now() - volumeMovedAt > 2500) $("volume").value = volume;
   }
+  renderRooms(state);
   $("error").hidden = !state.error;
   $("error").textContent = state.error || "";
 }
@@ -54,3 +55,47 @@ browser.runtime.sendMessage({ type: "getState" }).then((state) => {
   render(state);
   if (!state.renderers.length && !state.searching) browser.runtime.sendMessage({ type: "discover" });
 });
+
+// Sonos: the rooms that play along with the group, each with its volume.
+let roomsAsked = false;
+let roomMovedAt = 0;
+
+function renderRooms(state) {
+  const sonos = state.casting && (state.renderers.find((r) => r.url === state.renderer) || {}).sonos;
+  $("rooms").hidden = !sonos;
+  if (!sonos) return;
+  if (!roomsAsked) {
+    roomsAsked = true;
+    browser.runtime.sendMessage({ type: "rooms", cmd: "rooms" });
+  }
+  if (Date.now() - roomMovedAt < 2500) return;
+  const rooms = state.rooms && state.rooms.renderer === state.renderer ? state.rooms.rooms : [];
+  $("room-list").replaceChildren(...rooms.map((room) => {
+    const row = document.createElement("label");
+    row.className = "room";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = room.in;
+    box.disabled = room.leading;
+    box.onchange = () => browser.runtime.sendMessage({ type: "rooms", cmd: "room", id: room.id, in: box.checked });
+    const name = document.createElement("span");
+    name.textContent = room.leading ? `${room.name} (führt)` : room.name;
+    row.append(box, name);
+    if (room.in && typeof room.volume === "number") {
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = "0";
+      slider.max = "100";
+      slider.value = room.volume;
+      let timer = null;
+      slider.oninput = () => {
+        roomMovedAt = Date.now();
+        clearTimeout(timer);
+        timer = setTimeout(() => browser.runtime.sendMessage({ type: "rooms", cmd: "roomVolume", id: room.id,
+                                                               value: Number(slider.value) }), 150);
+      };
+      row.append(slider);
+    }
+    return row;
+  }));
+}

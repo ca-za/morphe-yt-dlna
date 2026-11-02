@@ -75,12 +75,18 @@ impl Renderer {
         let parts: Vec<&str> = xml.split("<serviceList>").collect();
         for index in 1..parts.len() {
             let list = parts[index].split("</serviceList>").next().unwrap_or("");
-            let services: Vec<Service> = list.split("<service>").skip(1).map(|service| Service {
+            let service_of = |service: &str| Service {
                 kind: tag(service, "serviceType").unwrap_or_default(),
                 control_url: absolute(tag(service, "controlURL").unwrap_or_default()),
-            }).collect();
+            };
+            let mut services: Vec<Service> = list.split("<service>").skip(1).map(service_of).collect();
             if !services.iter().any(|s| s.kind.contains(":service:AVTransport:")) {
                 continue;
+            }
+            // Sonos: the group topology belongs to the player around the renderer.
+            if let Some(topology) = xml.split("<service>").skip(1).map(service_of)
+                .find(|s| s.kind.contains(":service:ZoneGroupTopology:")) {
+                services.push(topology);
             }
             // The device element this service list belongs to: its name and UDN come before it.
             let device = parts[index - 1].rsplit("<device>").next().unwrap_or("");
@@ -107,10 +113,6 @@ impl Renderer {
 
     pub fn has(&self, name: &str) -> bool {
         self.service(name).is_some()
-    }
-
-    pub fn is_sonos(&self) -> bool {
-        self.manufacturer.to_ascii_lowercase().contains("sonos")
     }
 
     /// Calls `action` of the service `name` ("AVTransport", "Playlist", ...). UPnP AV services

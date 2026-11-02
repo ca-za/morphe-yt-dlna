@@ -270,8 +270,8 @@ impl Actor {
         } else {
             host.to_string()
         };
-        // Sonos plays OpenHome-less; its queue comes with its own support (sonos.rs).
-        let backend = if renderer.has("Playlist") {
+        // YTDLNA_AVTRANSPORT_ONLY=1: as for renderers without OpenHome (for tests).
+        let backend = if renderer.has("Playlist") && std::env::var_os("YTDLNA_AVTRANSPORT_ONLY").is_none() {
             Backend::OpenHome { track_of: HashMap::new(), video_of: HashMap::new(), current_track: 0, replacing: false, refused: HashSet::new() }
         } else {
             Backend::AvTransport { next: None, next_supported: true }
@@ -646,6 +646,10 @@ fn pause(r: &Renderer, openhome: bool) -> std::io::Result<()> {
 }
 
 fn get_volume(r: &Renderer) -> std::io::Result<u32> {
+    // Sonos: the volume of the group the renderer leads (for one room the same as its own).
+    if crate::sonos::is(r) && r.has("GroupRenderingControl") {
+        return crate::sonos::group_volume(r);
+    }
     if r.has("RenderingControl") {
         return r.volume();
     }
@@ -654,6 +658,9 @@ fn get_volume(r: &Renderer) -> std::io::Result<u32> {
 }
 
 fn set_volume(r: &Renderer, volume: u32) -> std::io::Result<()> {
+    if crate::sonos::is(r) && r.has("GroupRenderingControl") {
+        return crate::sonos::set_group_volume(r, volume);
+    }
     if r.has("RenderingControl") {
         return r.set_volume(volume);
     }

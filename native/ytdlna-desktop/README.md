@@ -24,6 +24,25 @@ While casting, the tab's player stays muted and paused at the renderer's positio
 button (and a click into the video, space, k) plays or pauses the renderer, its progress bar
 seeks it. At the end of a video the tab moves on to its next title (its queue, autoplay), which
 is then cast. 
+**Queue.** The tab's queue goes to the renderer: YouTube Music's queue (with its automix),
+a YouTube playlist or mix, or a single video and what autoplay plays next. Renderers with an
+OpenHome playlist get all of it and play on by themselves; their remote skips, and the tab
+follows. Others get the next title in advance (SetNextAVTransportURI), or, if they do not take
+one, each title once the last one ended. Streams are resolved only when the renderer asks for a
+title (`media.rs`).
+
+**Metadata.** Titles and artists from the page (oEmbed where it gives none); for songs the album,
+year, label and album cover from Deezer, else iTunes, as in the Android app (`metadata.rs`).
+
+**macOS.** While casting, the title shows in Control Center as playing; the media keys play,
+pause and skip on the renderer (`nowplaying.rs`). Afterwards the keys go back to other apps.
+
+**Volume and Sonos.** Both menus have a volume slider. Sonos players appear once per group,
+named after its rooms ("Kitchen + 1"); its menu lists the household's rooms to add to the group or
+take out, each with its volume, and the slider sets the group's volume (`sonos.rs`).
+
+`YTDLNA_AVTRANSPORT_ONLY=1` treats every renderer as one without OpenHome (for tests).
+
 The native messaging protocol is described in `src/host.rs`. For a renderer that is not found
 on the network (an emulator), the extension's storage key `host` sets the address the renderer
 reaches this computer at (e.g. `10.0.2.2`).
