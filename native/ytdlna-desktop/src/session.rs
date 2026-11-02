@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use crate::dlna::{self, Renderer};
 use crate::media::{self, Served};
 use crate::metadata::{self, Track};
+use crate::nowplaying;
 
 pub type Out = Arc<dyn Fn(Value) + Send + Sync>;
 
@@ -109,6 +110,7 @@ pub fn run(out: Out, tx: Sender<Msg>, rx: Receiver<Msg>) {
                 if let Some(s) = &actor.session {
                     let _ = stop(s);
                 }
+                nowplaying::clear();
                 return;
             }
             Ok(msg) => actor.handle(msg),
@@ -177,6 +179,7 @@ impl Actor {
         }
         if matches!(msg, Msg::Stop) {
             let s = self.session.take().unwrap();
+            nowplaying::clear();
             if let Err(e) = stop(&s) {
                 self.error(e, "");
             }
@@ -335,6 +338,7 @@ impl Actor {
             Err(e) => {
                 let id = s.current.clone();
                 self.session = None;
+                nowplaying::clear();
                 return self.error(e, &id);
             }
         };
@@ -377,6 +381,7 @@ impl Actor {
     fn announce_with_label(&self, kind: &str, label: &str) {
         let Some(s) = &self.session else { return };
         let t = self.track_for(&s.current);
+        nowplaying::track(&t, &s.renderer.name);
         (self.out)(json!({
             "type": kind, "videoId": t.video_id, "title": t.title, "channel": t.artist, "album": t.album,
             "year": t.year, "art": t.art, "duration": t.duration, "renderer": s.renderer.name,
@@ -459,6 +464,9 @@ impl Actor {
         if self.ticks % 3 == 1 {
             s.volume = get_volume(&s.renderer).ok();
         }
+        if s.state != state || position.abs_diff(s.position) > 2 || self.ticks % 10 == 0 {
+            nowplaying::playback(state == "PLAYING", position);
+        }
         s.state = state.clone();
         s.position = position;
         let track_duration = self.completed.get(&s.current).map_or(0, |t| t.duration);
@@ -480,6 +488,7 @@ impl Actor {
             if !ended {
                 (self.out)(json!({"type": "stopped", "videoId": current}));
                 self.session = None;
+                nowplaying::clear();
                 return;
             }
             if !openhome {

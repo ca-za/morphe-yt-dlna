@@ -16,3 +16,5 @@ button:disabled { opacity: .5; }
 #meta { margin-bottom: 8px; }
 #error { color: var(--error); margin: 12px 0 0; }
 #hidden { font-size: 12px; margin: 6px 0 0; }
+.volume { align-items: center; display: flex; gap: 8px; margin: 10px 0 0; }
+.volume input { accent-color: var(--accent); flex: 1; }

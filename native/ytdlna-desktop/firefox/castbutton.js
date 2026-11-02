@@ -64,6 +64,8 @@ const MENU_STYLE = `
   .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .muted { color: #aaa; padding: 8px 16px; }
   .error { color: #ff8a80; padding: 8px 16px; }
+  .volume { display: flex; align-items: center; gap: 12px; padding: 8px 16px; }
+  .volume input { flex: 1; accent-color: #e53935; }
   hr { border: 0; border-top: 1px solid rgba(255, 255, 255, .15); margin: 6px 0; }
 `;
 
@@ -144,6 +146,7 @@ function renderMenu() {
         : `${s.unsupported} Geräte ohne passendes Format ausgeblendet`));
     }
     box.append(document.createElement("hr"));
+    if (castingHere && s.status && typeof s.status.volume === "number") box.append(volumeRow(s.status.volume));
     if (castingHere) {
       box.append(item("Wiedergabe beenden", () => {
         browser.runtime.sendMessage({ type: "control", cmd: "stop" });
@@ -160,6 +163,34 @@ function renderMenu() {
   box.style.bottom = `${Math.max(8, window.innerHeight - r.top + 8)}px`;
 }
 
+let volumeMovedAt = 0;
+let volumeTimer = null;
+let volumeSlider = null;
+
+function volumeRow(volume) {
+  const row = document.createElement("label");
+  row.className = "volume";
+  const icon = document.createElement("span");
+  icon.className = "check";
+  icon.textContent = "🔊";
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = "0";
+  slider.max = "100";
+  slider.setAttribute("aria-label", "Lautstärke");
+  // While it is moved the renderer's answer lags behind: the slider keeps its own value.
+  slider.value = volumeSlider && Date.now() - volumeMovedAt < 2500 ? volumeSlider.value : String(volume);
+  slider.addEventListener("click", (event) => event.stopPropagation());
+  slider.addEventListener("input", () => {
+    volumeMovedAt = Date.now();
+    clearTimeout(volumeTimer);
+    volumeTimer = setTimeout(() => browser.runtime.sendMessage({ type: "control", cmd: "volume", value: Number(slider.value) }), 120);
+  });
+  volumeSlider = slider;
+  row.append(icon, slider);
+  return row;
+}
+
 function castOn(url) {
   const id = videoId();
   if (!id) return;
@@ -172,7 +203,7 @@ browser.runtime.onMessage.addListener((message) => {
   if (message.type !== "state") return;
   ext = { state: message.state, here: message.here };
   paintButton();
-  renderMenu();
+  if (Date.now() - volumeMovedAt > 2500 && !(volumeSlider && volumeSlider.matches(":active"))) renderMenu();
 });
 
 setInterval(placeButton, 1000);

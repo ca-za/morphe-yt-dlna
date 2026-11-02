@@ -1,4 +1,6 @@
 const $ = (id) => document.getElementById(id);
+let volumeMovedAt = 0;
+let volumeTimer = null;
 
 function time(seconds) {
   seconds = Math.floor(seconds || 0);
@@ -25,6 +27,10 @@ function render(state) {
     const s = state.status;
     $("time").textContent = s ? `${time(s.position)} / ${time(c.duration)}` : "";
     $("toggle").textContent = s && s.state === "PLAYING" ? "Pause" : "Abspielen";
+    // Not while the slider is moved: the renderer's answer lags behind.
+    const volume = s && typeof s.volume === "number" ? s.volume : null;
+    $("volume").disabled = volume === null;
+    if (volume !== null && Date.now() - volumeMovedAt > 2500) $("volume").value = volume;
   }
   $("error").hidden = !state.error;
   $("error").textContent = state.error || "";
@@ -37,6 +43,11 @@ $("discover").onclick = () => browser.runtime.sendMessage({ type: "discover" });
 $("renderer").onchange = (e) => browser.runtime.sendMessage({ type: "select", url: e.target.value });
 $("cast").onclick = () => browser.runtime.sendMessage({ type: "castActiveTab" });
 $("toggle").onclick = () => browser.runtime.sendMessage({ type: "control", cmd: "toggle" });
+$("volume").oninput = (e) => {
+  volumeMovedAt = Date.now();
+  clearTimeout(volumeTimer);
+  volumeTimer = setTimeout(() => browser.runtime.sendMessage({ type: "control", cmd: "volume", value: Number(e.target.value) }), 120);
+};
 $("stop").onclick = () => browser.runtime.sendMessage({ type: "control", cmd: "stop" });
 
 browser.runtime.sendMessage({ type: "getState" }).then((state) => {

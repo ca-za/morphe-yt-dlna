@@ -11,6 +11,7 @@ mod fmp4;
 mod host;
 mod media;
 mod metadata;
+mod nowplaying;
 mod session;
 mod youtube;
 

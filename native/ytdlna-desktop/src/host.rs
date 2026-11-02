@@ -56,10 +56,10 @@ pub fn run() -> io::Result<()> {
         let (out, tx) = (out.clone(), tx.clone());
         thread::Builder::new().name("stdin".into()).spawn(move || read_messages(out, tx))?;
     }
-    // Reading stdin ends the process when Firefox goes; until then the main thread waits.
-    loop {
-        thread::park();
-    }
+    crate::nowplaying::init(tx);
+    // The main thread runs what macOS delivers the media keys with; reading stdin ends the
+    // process when Firefox goes.
+    crate::nowplaying::run_main_loop()
 }
 
 fn read_messages(out: Out, tx: Sender<Msg>) {
