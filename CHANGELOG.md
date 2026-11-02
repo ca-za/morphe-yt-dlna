@@ -1,3 +1,19 @@
+## [0.1.16-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.15-alpha...v0.1.16-alpha) (2026-11-02)
+
+### ✨ New Features
+
+* renderers whose volume is a receiver's (VolumeSteps): volume keys send steps, the device list shows − + and mute ([2bb8f57](https://github.com/ca-za/morphe-yt-dlna/commit/2bb8f57e29af5377b749eedd676dcafa821bb600))
+* renderers that only take volume steps (VolumeSteps): − + and mute instead of a slider ([c948438](https://github.com/ca-za/morphe-yt-dlna/commit/c948438894f3c396ecb84675509a67fa662a724b))
+
+### 🐛 Bug Fixes
+
+* macOS media controls are set up on the main thread, so next and previous are enabled ([d7cf1cd](https://github.com/ca-za/morphe-yt-dlna/commit/d7cf1cd05e564cbb0af7c2762055417e1981f253))
+* the tab follows the renderer's skips (media keys, remote) with the player's next/previous instead of sending its old title back ([8229346](https://github.com/ca-za/morphe-yt-dlna/commit/8229346833d9e8015716adb8082e51d71de920cc))
+* the host runs as a background app for macOS media keys; casting from a YouTube Music page without the video in its address ([1b36c52](https://github.com/ca-za/morphe-yt-dlna/commit/1b36c5253ee2fcee13749fa659c8244a019f2f22))
+* YouTube Music's newer player bar: play/pause, next and the cast button; the cover toggles playback ([55cb92e](https://github.com/ca-za/morphe-yt-dlna/commit/55cb92e812df1d7fefaa88c18e76676c29f226ee))
+* after an extension reload the old page script lets go of the page; open tabs get the new one ([3c97a2f](https://github.com/ca-za/morphe-yt-dlna/commit/3c97a2fde9161d901b48f3966bf5c400fdead62d))
+* a new album or show replaces the renderer playlist, which fills faster, and part changes load once ([a07cceb](https://github.com/ca-za/morphe-yt-dlna/commit/a07cceb80faa88ced7436287f87ee65ca8669593))
+
 ## [0.1.15-alpha](https://github.com/ca-za/morphe-yt-dlna/compare/v0.1.14-alpha...v0.1.15-alpha) (2026-10-31)
 
 ### 🐛 Bug Fixes
