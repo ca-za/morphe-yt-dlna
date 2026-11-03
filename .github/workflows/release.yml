@@ -53,7 +53,7 @@ jobs:
       # main (stable releases): semantic release runs its own Gradle build command.
       - name: Release (main)
         if: github.ref == 'refs/heads/main'
-        uses: cycjimmy/semantic-release-action@v6
+        uses: cycjimmy/semantic-release-action@v8
         id: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
